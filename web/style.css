@@ -1,0 +1,115 @@
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  src: local('Atkinson Hyperlegible');
+}
+
+:root {
+  color: #fff8dc;
+  background: #111012;
+  font-family: 'Atkinson Hyperlegible', ui-rounded, system-ui, sans-serif;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 18% 16%, #2b665f 0 14rem, transparent 28rem),
+    radial-gradient(circle at 82% 12%, #7b2538 0 12rem, transparent 25rem),
+    linear-gradient(135deg, #151214, #0a0b0d 58%, #17201c);
+}
+
+.shell {
+  width: min(960px, calc(100vw - 32px));
+  display: grid;
+  gap: 22px;
+}
+
+.hero {
+  display: grid;
+  gap: 8px;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #79f7c8;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(42px, 8vw, 92px);
+  line-height: .86;
+  letter-spacing: -.07em;
+}
+
+.copy, .keys {
+  max-width: 620px;
+  margin: 0;
+  color: #d5c9a3;
+}
+
+.stage {
+  width: fit-content;
+  padding: 16px;
+  border: 1px solid #ffffff24;
+  border-radius: 26px;
+  background: linear-gradient(145deg, #282220cc, #121517dd);
+  box-shadow: 0 28px 80px #000a, inset 0 1px 0 #ffffff2b;
+}
+
+#screen {
+  width: min(720px, calc(100vw - 64px));
+  height: auto;
+  display: block;
+  image-rendering: pixelated;
+  border-radius: 14px;
+  background: #f8f8f8;
+  box-shadow: 0 0 0 1px #000 inset;
+}
+
+.status {
+  margin-top: 12px;
+  color: #79f7c8;
+  font-size: 13px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: center;
+}
+
+.dpad, .face {
+  display: grid;
+  gap: 8px;
+}
+
+.dpad {
+  grid-template-columns: repeat(3, 48px);
+}
+
+.dpad [data-key='up'] { grid-column: 2; }
+.dpad [data-key='left'] { grid-column: 1; }
+.dpad [data-key='right'] { grid-column: 3; grid-row: 2; }
+.dpad [data-key='down'] { grid-column: 2; }
+.face { grid-template-columns: repeat(4, 76px); }
+
+button {
+  min-height: 48px;
+  border: 0;
+  border-radius: 999px;
+  color: #241512;
+  background: #f2cf62;
+  font-weight: 900;
+  box-shadow: 0 8px 0 #8b5e22, 0 14px 28px #0007;
+}
+
+button:active, button.pressed {
+  transform: translateY(6px);
+  box-shadow: 0 2px 0 #8b5e22, 0 8px 18px #0007;
+}

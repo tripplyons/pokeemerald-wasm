@@ -18,6 +18,12 @@
 #include "constants/trainer_hill.h"
 
 // Prevent cross-jump optimization.
+#if WASM
+#define BLOCK_CROSS_JUMP
+#define asm_unified(x)
+#define NAKED
+#define asm(...)
+#else
 #define BLOCK_CROSS_JUMP asm("");
 
 // to help in decompiling
@@ -27,9 +33,10 @@
 #if MODERN
 #define asm __asm__
 #endif
+#endif
 
 /// IDE support
-#if defined(__APPLE__) || defined(__CYGWIN__) || defined(__INTELLISENSE__)
+#if !WASM && (defined(__APPLE__) || defined(__CYGWIN__) || defined(__INTELLISENSE__))
 // We define these when using certain IDEs to fool preproc
 #define _(x)        {x}
 #define __(x)       {x}
@@ -40,6 +47,9 @@
 #define INCBIN_S8   INCBIN
 #define INCBIN_S16  INCBIN
 #define INCBIN_S32  INCBIN
+#define INCGFX_U8   INCBIN
+#define INCGFX_U16  INCBIN
+#define INCGFX_U32  INCBIN
 #endif // IDE support
 
 #define ARRAY_COUNT(array) (size_t)(sizeof(array) / sizeof((array)[0]))

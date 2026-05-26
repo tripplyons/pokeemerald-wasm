@@ -76,6 +76,9 @@ static EWRAM_DATA u16 sTrainerId = 0;
 static void UpdateLinkAndCallCallbacks(void);
 static void InitMainCallbacks(void);
 static void CallCallbacks(void);
+#if WASM
+void WasmRunFrame(void);
+#endif
 #ifdef BUGFIX
 static void SeedRngWithRtc(void);
 #endif
@@ -98,11 +101,15 @@ void AgbMain(void)
     REG_WAITCNT = WAITCNT_PREFETCH_ENABLE | WAITCNT_WS0_S_1 | WAITCNT_WS0_N_3;
     InitKeys();
     InitIntrHandlers();
+#if WASM
+    gFlashMemoryPresent = TRUE;
+#else
     m4aSoundInit();
     EnableVCountIntrAtLine150();
     InitRFU();
     RtcInit();
     CheckForFlashMemory();
+#endif
     InitMainCallbacks();
     InitMapMusic();
 #ifdef BUGFIX
@@ -128,44 +135,55 @@ void AgbMain(void)
     AGBPrintInit();
 #endif
 #endif
+#if WASM
+    return;
+#else
     for (;;)
+        WasmRunFrame();
+#endif
+}
+
+void WasmRunFrame(void)
+{
+    ReadKeys();
+
+    if (gSoftResetDisabled == FALSE
+     && JOY_HELD_RAW(A_BUTTON)
+     && JOY_HELD_RAW(B_START_SELECT) == B_START_SELECT)
     {
-        ReadKeys();
+        rfu_REQ_stopMode();
+        rfu_waitREQComplete();
+        DoSoftReset();
+    }
 
-        if (gSoftResetDisabled == FALSE
-         && JOY_HELD_RAW(A_BUTTON)
-         && JOY_HELD_RAW(B_START_SELECT) == B_START_SELECT)
-        {
-            rfu_REQ_stopMode();
-            rfu_waitREQComplete();
-            DoSoftReset();
-        }
+    if (Overworld_SendKeysToLinkIsRunning() == TRUE)
+    {
+        gLinkTransferringData = TRUE;
+        UpdateLinkAndCallCallbacks();
+        gLinkTransferringData = FALSE;
+    }
+    else
+    {
+        gLinkTransferringData = FALSE;
+        UpdateLinkAndCallCallbacks();
 
-        if (Overworld_SendKeysToLinkIsRunning() == TRUE)
+        if (Overworld_RecvKeysFromLinkIsRunning() == TRUE)
         {
+            gMain.newKeys = 0;
+            ClearSpriteCopyRequests();
             gLinkTransferringData = TRUE;
             UpdateLinkAndCallCallbacks();
             gLinkTransferringData = FALSE;
         }
-        else
-        {
-            gLinkTransferringData = FALSE;
-            UpdateLinkAndCallCallbacks();
-
-            if (Overworld_RecvKeysFromLinkIsRunning() == TRUE)
-            {
-                gMain.newKeys = 0;
-                ClearSpriteCopyRequests();
-                gLinkTransferringData = TRUE;
-                UpdateLinkAndCallCallbacks();
-                gLinkTransferringData = FALSE;
-            }
-        }
-
-        PlayTimeCounter_Update();
-        MapMusicMain();
-        WaitForVBlank();
     }
+
+    PlayTimeCounter_Update();
+    MapMusicMain();
+#if WASM
+    VBlankIntr();
+#else
+    WaitForVBlank();
+#endif
 }
 
 static void UpdateLinkAndCallCallbacks(void)

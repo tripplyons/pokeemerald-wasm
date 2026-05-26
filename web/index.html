@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pokeemerald wasm</title>
+  <link rel="stylesheet" href="/web/style.css" />
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">native C → WebAssembly</p>
+      <h1>pokeemerald wasm</h1>
+      <p class="copy">The compiled game is running in the browser. Use keyboard controls or the buttons below.</p>
+    </section>
+
+    <section class="stage">
+      <canvas id="screen" width="240" height="160" aria-label="Game screen"></canvas>
+      <div class="status" id="status">loading wasm…</div>
+    </section>
+
+    <section class="controls" aria-label="Controls">
+      <div class="dpad">
+        <button data-key="up">↑</button>
+        <button data-key="left">←</button>
+        <button data-key="right">→</button>
+        <button data-key="down">↓</button>
+      </div>
+      <div class="face">
+        <button data-key="b">B</button>
+        <button data-key="a">A</button>
+        <button data-key="select">SELECT</button>
+        <button data-key="start">START</button>
+      </div>
+    </section>
+
+    <p class="keys">Keyboard: arrows, Z=A, X=B, Enter=Start, Backspace=Select.</p>
+  </main>
+  <script type="module" src="/web/app.js"></script>
+</body>
+</html>

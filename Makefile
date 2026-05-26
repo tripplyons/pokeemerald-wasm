@@ -15,6 +15,9 @@ MODERN      ?= 0
 # Compares the ROM to a checksum of the original - only makes sense using when non-modern
 COMPARE     ?= 0
 
+WASM_CC ?= clang
+WASM_LD ?= $(shell { command -v wasm-ld || find "$$HOME/.rustup/toolchains" -path '*/gcc-ld/wasm-ld' -type f 2>/dev/null | head -n1; })
+
 ifeq (modern,$(MAKECMDGOALS))
   MODERN := 1
 endif
@@ -71,6 +74,9 @@ ROM_NAME := $(FILE_NAME).gba
 OBJ_DIR_NAME := $(BUILD_DIR)/emerald
 MODERN_ROM_NAME := $(FILE_NAME)_modern.gba
 MODERN_OBJ_DIR_NAME := $(BUILD_DIR)/modern
+WASM_BUILD_DIR := $(BUILD_DIR)/wasm
+WASM_OBJ_DIR := $(WASM_BUILD_DIR)/obj
+WASM := $(WASM_BUILD_DIR)/$(FILE_NAME).wasm
 ASSETS_DIR_NAME := $(BUILD_DIR)/assets
 
 ELF_NAME := $(ROM_NAME:.gba=.elf)
@@ -159,8 +165,8 @@ MAKEFLAGS += --no-print-directory
 # Delete files that weren't built properly
 .DELETE_ON_ERROR:
 
-RULES_NO_SCAN += libagbsyscall clean clean-assets tidy tidymodern tidynonmodern generated clean-generated
-.PHONY: all rom modern compare
+RULES_NO_SCAN += libagbsyscall clean clean-assets tidy tidymodern tidynonmodern generated clean-generated wasm-assets clean-wasm serve-wasm
+.PHONY: all rom modern compare wasm wasm-assets clean-wasm serve-wasm
 .PHONY: $(RULES_NO_SCAN)
 
 infoshell = $(foreach line, $(shell $1 | sed "s/ /__SPACE__/g"), $(info $(subst __SPACE__, ,$(line))))
@@ -169,6 +175,12 @@ infoshell = $(foreach line, $(shell $1 | sed "s/ /__SPACE__/g"), $(info $(subst 
 NODEP ?= 0
 # Check if we need to pre-build tools and generate assets based on the chosen rule.
 SETUP_PREREQS ?= 1
+# Disable dependency scanning for the normal GBA objects when only the wasm build needs C sources.
+ifneq (,$(filter wasm,$(MAKECMDGOALS)))
+  NODEP := 1
+  SETUP_PREREQS := 1
+endif
+
 # Disable dependency scanning for rules that don't need it.
 ifneq (,$(MAKECMDGOALS))
   ifeq (,$(filter-out $(RULES_NO_SCAN),$(MAKECMDGOALS)))
@@ -197,6 +209,7 @@ endif
 C_SRCS_IN := $(wildcard $(C_SUBDIR)/*.c $(C_SUBDIR)/*/*.c $(C_SUBDIR)/*/*/*.c)
 C_SRCS := $(foreach src,$(C_SRCS_IN),$(if $(findstring .inc.c,$(src)),,$(src)))
 C_OBJS := $(patsubst $(C_SUBDIR)/%.c,$(C_BUILDDIR)/%.o,$(C_SRCS))
+WASM_C_OBJS := $(patsubst $(C_SUBDIR)/%.c,$(WASM_OBJ_DIR)/%.o,$(C_SRCS))
 
 C_ASM_SRCS := $(wildcard $(C_SUBDIR)/*.s $(C_SUBDIR)/*/*.s $(C_SUBDIR)/*/*/*.s)
 C_ASM_OBJS := $(patsubst $(C_SUBDIR)/%.s,$(C_BUILDDIR)/%.o,$(C_ASM_SRCS))
@@ -225,6 +238,27 @@ rom: $(ROM)
 ifeq ($(COMPARE),1)
 	@$(SHA1) rom.sha1
 endif
+
+wasm: generated wasm-assets $(WASM)
+
+wasm-assets: $(GFX)
+	uv run python tools/generate_wasm_assets.py
+
+$(WASM_C_OBJS): | generated wasm-assets
+
+$(WASM): $(WASM_C_OBJS)
+	@test -n "$(WASM_LD)" || { echo "wasm-ld not found; set WASM_LD=/path/to/wasm-ld"; exit 1; }
+	$(WASM_LD) --no-entry --allow-undefined --initial-memory=268435456 --max-memory=268435456 --export=AgbMain --export=WasmRunFrame --export-all -o $@ $^
+
+$(WASM_OBJ_DIR)/%.o: $(C_SUBDIR)/%.c
+	@mkdir -p $(dir $@)
+	$(WASM_CC) --target=wasm32-unknown-unknown -DMODERN=1 -DWASM=1 -I include/wasm -I include -iquote include -E $< | $(PREPROC) -i -g $(ASSETS_DIR_NAME) $< charmap.txt | $(WASM_CC) --target=wasm32-unknown-unknown -x c -O2 -Wno-incompatible-library-redeclaration -Wno-unknown-attributes -Wno-ignored-attributes -Wno-parentheses -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast -Wno-builtin-requires-header -Wno-gnu-alignof-expression -Wno-unknown-escape-sequence -Wno-excess-initializers -c - -o $@
+
+clean-wasm:
+	rm -rf $(WASM_BUILD_DIR)
+
+serve-wasm: $(WASM)
+	node web/server.mjs
 
 syms: $(SYM)
 
@@ -274,6 +308,13 @@ generated: $(AUTO_GEN_TARGETS)
 %.gbapal: %.png  ; $(GFX) $< $@
 %.lz:     %      ; $(GFX) $< $@
 %.rl:     %      ; $(GFX) $< $@
+
+$(ASSETS_DIR_NAME)/%.png.1bpp: %.png  ; @mkdir -p $(dir $@); $(GFX) $< $@
+$(ASSETS_DIR_NAME)/%.png.4bpp: %.png  ; @mkdir -p $(dir $@); $(GFX) $< $@
+$(ASSETS_DIR_NAME)/%.png.8bpp: %.png  ; @mkdir -p $(dir $@); $(GFX) $< $@
+$(ASSETS_DIR_NAME)/%.png.gbapal: %.png; @mkdir -p $(dir $@); $(GFX) $< $@
+$(ASSETS_DIR_NAME)/%.pal.gbapal: %.pal; @mkdir -p $(dir $@); $(GFX) $< $@
+$(ASSETS_DIR_NAME)/%: %               ; @mkdir -p $(dir $@); cp $< $@
 
 clean-generated:
 	@rm -f $(AUTO_GEN_TARGETS)
