@@ -20,6 +20,43 @@ COMMON_DATA struct PokemonCrySong gPokemonCrySong = {0};
 COMMON_DATA u8 gMPlayMemAccArea[0x10] = {0};
 COMMON_DATA struct MusicPlayerInfo gMPlayInfo_SE3 = {0};
 
+#if WASM
+void m4aSoundVSync(void) {}
+void m4aSoundVSyncOn(void) {}
+void m4aSoundVSyncOff(void) {}
+void m4aSoundInit(void) {}
+void m4aSoundMain(void) {}
+void m4aSoundMode(u32 mode) {}
+void m4aSongNumStart(u16 n) {}
+void m4aSongNumStartOrChange(u16 n) {}
+void m4aSongNumStop(u16 n) {}
+void m4aMPlayAllStop(void) {}
+void m4aMPlayContinue(struct MusicPlayerInfo *mplayInfo) {}
+void m4aMPlayFadeOut(struct MusicPlayerInfo *mplayInfo, u16 speed) {}
+void m4aMPlayFadeOutTemporarily(struct MusicPlayerInfo *mplayInfo, u16 speed) {}
+void m4aMPlayFadeIn(struct MusicPlayerInfo *mplayInfo, u16 speed) {}
+void m4aMPlayImmInit(struct MusicPlayerInfo *mplayInfo) {}
+void m4aMPlayStop(struct MusicPlayerInfo *mplayInfo) {}
+void m4aMPlayTempoControl(struct MusicPlayerInfo *mplayInfo, u16 tempo) {}
+void m4aMPlayVolumeControl(struct MusicPlayerInfo *mplayInfo, u16 trackBits, u16 volume) {}
+void m4aMPlayPitchControl(struct MusicPlayerInfo *mplayInfo, u16 trackBits, s16 pitch) {}
+void m4aMPlayPanpotControl(struct MusicPlayerInfo *mplayInfo, u16 trackBits, s8 pan) {}
+void m4aMPlayModDepthSet(struct MusicPlayerInfo *mplayInfo, u16 trackBits, u8 modDepth) {}
+void m4aMPlayLFOSpeedSet(struct MusicPlayerInfo *mplayInfo, u16 trackBits, u8 lfoSpeed) {}
+void MPlayContinue(struct MusicPlayerInfo *mplayInfo) {}
+void MPlayFadeOut(struct MusicPlayerInfo *mplayInfo, u16 speed) {}
+void MPlayStart(struct MusicPlayerInfo *mplayInfo, struct SongHeader *songHeader) {}
+void MPlayMain(struct MusicPlayerInfo *mplayInfo) {}
+void MPlayOpen(struct MusicPlayerInfo *mplayInfo, struct MusicPlayerTrack *tracks, u8 trackCount) {}
+void MPlayExtender(struct CgbChannel *cgbChans) {}
+void MPlayJumpTableCopy(MPlayFunc *mplayJumpTable) {}
+void SoundInit(struct SoundInfo *soundInfo) {}
+void SoundMain(void) {}
+void SoundMainBTM(void) {}
+u32 MidiKeyToFreq(struct WaveData *wav, u8 key, u8 fineAdjust) { return 0; }
+void SetPokemonCryPriority(u8 val) { gPokemonCrySong.priority = val; }
+#else
+
 u32 MidiKeyToFreq(struct WaveData *wav, u8 key, u8 fineAdjust)
 {
     u32 val1;
@@ -1779,3 +1816,4 @@ void SetPokemonCryPriority(u8 val)
 {
     gPokemonCrySong.priority = val;
 }
+#endif

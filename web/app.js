@@ -459,14 +459,18 @@ async function boot() {
   writeKeys();
   instance.exports.AgbMain();
   statusEl.textContent = `running — ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MiB wasm`;
-  requestAnimationFrame(tick);
+  setInterval(tick, 1000 / 60);
 }
 
 function tick() {
-  writeKeys();
-  for (let i = 0; i < 1; i++) instance.exports.WasmRunFrame();
-  render();
-  requestAnimationFrame(tick);
+  try {
+    writeKeys();
+    instance.exports.WasmRunFrame();
+    render();
+  } catch (error) {
+    console.error(error);
+    statusEl.textContent = error.stack || String(error);
+  }
 }
 
 boot().catch((error) => {
