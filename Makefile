@@ -216,7 +216,8 @@ WASM_DATA_ASM_SRCS := \
 	$(DATA_ASM_SUBDIR)/event_scripts.s \
 	$(DATA_ASM_SUBDIR)/battle_scripts_1.s \
 	$(DATA_ASM_SUBDIR)/battle_scripts_2.s \
-	$(DATA_ASM_SUBDIR)/battle_ai_scripts.s
+	$(DATA_ASM_SUBDIR)/battle_ai_scripts.s \
+	$(DATA_ASM_SUBDIR)/battle_anim_scripts.s
 WASM_DATA_OBJS := $(patsubst $(DATA_ASM_SUBDIR)/%.s,$(WASM_OBJ_DIR)/%.o,$(WASM_DATA_ASM_SRCS))
 
 C_ASM_SRCS := $(wildcard $(C_SUBDIR)/*.s $(C_SUBDIR)/*/*.s $(C_SUBDIR)/*/*/*.s)

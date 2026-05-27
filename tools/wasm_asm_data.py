@@ -3,18 +3,24 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 LABEL_RE = re.compile(r"^([A-Za-z_.$][\w.$]*)(::?)\s*(.*)$")
 ASSIGN_RE = re.compile(r"^([A-Za-z_.$][\w.$]*)\s*=\s*(.+)$")
 INCLUDE_RE = re.compile(r'^\s*\.include\s+"([^"]+)"')
+CPP_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
+DEFINE_RE = re.compile(r"^\s*#\s*define\s+([A-Za-z_]\w*)(?:\s+(.+))?$")
 
 
 class AsmMacro:
     def __init__(self, params: List[Tuple[str, Optional[str]]], body: List[str]):
         self.params = params
         self.body = body
+
+
+VARARG_DEFAULT = "__WASM_ASM_VARARG__"
+FUNCTION_SYMBOLS: Optional[Set[str]] = None
 
 
 def load_script_command_constants() -> Dict[str, int]:
@@ -37,6 +43,27 @@ def load_script_command_functions() -> List[str]:
             continue
         functions.append(line.split()[2])
     return functions
+
+
+def load_function_symbols() -> Set[str]:
+    global FUNCTION_SYMBOLS
+    if FUNCTION_SYMBOLS is not None:
+        return FUNCTION_SYMBOLS
+
+    symbols: Set[str] = set()
+    pattern = re.compile(
+        r"^[A-Za-z_][\w\s\*]*?\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:\{|;)",
+        re.MULTILINE,
+    )
+    for root_name in ("src", "include"):
+        for path in (ROOT / root_name).glob("**/*.[ch]"):
+            text = strip_c_comments(path.read_text(errors="ignore"))
+            for match in pattern.finditer(text):
+                name = match.group(1)
+                if name not in {"if", "for", "while", "switch", "return"}:
+                    symbols.add(name)
+    FUNCTION_SYMBOLS = symbols
+    return symbols
 
 
 def load_special_constants() -> Dict[str, int]:
@@ -131,6 +158,102 @@ def load_map_constants() -> Dict[str, int]:
     return constants
 
 
+def strip_c_comments(text: str) -> str:
+    return re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+
+
+def normalize_c_int_expr(expr: str) -> str:
+    expr = expr.split("//", 1)[0].strip()
+    expr = re.sub(r"\b(0x[0-9A-Fa-f]+|\d+)[uUlL]+\b", r"\1", expr)
+    expr = re.sub(r"\([^()]*\b(?:u8|s8|u16|s16|u32|s32|bool|bool8|bool32)\s*\)", "", expr)
+    return expr
+
+
+def load_source_constants(source: Optional[Path]) -> Dict[str, int]:
+    if source is None:
+        return {}
+
+    constants: Dict[str, int] = {}
+    seen = set()
+
+    def resolve_include(include: str) -> Path:
+        root_path = ROOT / include
+        if root_path.exists():
+            return root_path
+        return ROOT / "include" / include
+
+    def read_header(path: Path) -> None:
+        path = path if path.is_absolute() else ROOT / path
+        path = path.resolve()
+        if path in seen or not path.exists():
+            return
+        seen.add(path)
+
+        text = strip_c_comments(path.read_text(errors="ignore"))
+        enum_value = 0
+        in_enum = False
+        for raw in text.splitlines():
+            line = raw.strip()
+            include_match = CPP_INCLUDE_RE.match(line)
+            if include_match:
+                read_header(resolve_include(include_match.group(1)))
+                continue
+
+            if in_enum:
+                if "}" in line:
+                    in_enum = False
+                    continue
+                entry = line.split("//", 1)[0].rstrip(",").strip()
+                if not entry:
+                    continue
+                name, sep, expr = entry.partition("=")
+                name = name.strip()
+                if not re.fullmatch(r"[A-Za-z_]\w*", name):
+                    continue
+                value = eval_asm_expr(normalize_c_int_expr(expr), constants) if sep else enum_value
+                if value is None:
+                    continue
+                constants[name] = value
+                enum_value = value + 1
+                continue
+
+            if line.startswith("enum"):
+                if "{" in line and "}" in line:
+                    body = line.split("{", 1)[1].rsplit("}", 1)[0]
+                    enum_value = 0
+                    for entry in split_args(body):
+                        name, sep, expr = entry.partition("=")
+                        name = name.strip()
+                        if not re.fullmatch(r"[A-Za-z_]\w*", name):
+                            continue
+                        value = eval_asm_expr(normalize_c_int_expr(expr), constants) if sep else enum_value
+                        if value is None:
+                            continue
+                        constants[name] = value
+                        enum_value = value + 1
+                    continue
+                if "{" in line:
+                    enum_value = 0
+                    in_enum = True
+                continue
+
+            match = DEFINE_RE.match(line)
+            if not match:
+                continue
+            name, expr = match.groups()
+            if "(" in name or expr is None:
+                continue
+            value = eval_asm_expr(normalize_c_int_expr(expr), constants)
+            if value is not None:
+                constants[name] = value
+
+    for raw in source.read_text(errors="ignore").splitlines():
+        match = CPP_INCLUDE_RE.match(raw)
+        if match:
+            read_header(resolve_include(match.group(1)))
+    return constants
+
+
 def preprocess(source: Path) -> str:
     first = subprocess.run(
         [str(ROOT / "tools/preproc/preproc"), str(source), "charmap.txt"],
@@ -165,7 +288,20 @@ def parse_int(expr: str, constants: Dict[str, int]) -> int:
 def split_args(text: str) -> List[str]:
     if not text:
         return []
-    args = [arg.strip() for arg in text.split(",")]
+    args = []
+    current = []
+    depth = 0
+    for char in text:
+        if char == "," and depth == 0:
+            args.append("".join(current).strip())
+            current = []
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+        current.append(char)
+    args.append("".join(current).strip())
     while args and args[-1] == "":
         args.pop()
     return args
@@ -230,6 +366,9 @@ def load_event_macros(source: Optional[Path] = None) -> Dict[str, AsmMacro]:
                 for param in split_args(params_text):
                     if not param:
                         continue
+                    if param.endswith(":vararg"):
+                        params.append((param[:-7].strip(), VARARG_DEFAULT))
+                        continue
                     if param.endswith(":req"):
                         param = param[:-4]
                     if "=" in param:
@@ -259,6 +398,33 @@ def substitute_constants(line: str, constants: Dict[str, int]) -> str:
     )
 
 
+def eval_asm_expr(expr: str, constants: Dict[str, int]) -> Optional[int]:
+    expr = substitute_constants(expr.strip(), constants)
+    if not re.fullmatch(r"[0-9xXa-fA-F\s()+\-*/%<>&|~]+", expr):
+        return None
+    try:
+        return int(eval(expr, {"__builtins__": {}}, {}))
+    except Exception:
+        return None
+
+
+def format_asm_expr(expr: str, constants: Dict[str, int]) -> str:
+    value = eval_asm_expr(expr, constants)
+    if value is not None:
+        return str(value)
+    return substitute_constants(expr, constants)
+
+
+def eval_macro_condition(expr: str, constants: Dict[str, int]) -> bool:
+    expr = substitute_constants(expr, constants)
+    expr = expr.replace("||", " or ").replace("&&", " and ")
+    expr = re.sub(r"(?<![=!<>])!(?!=)", " not ", expr)
+    try:
+        return bool(eval(expr, {"__builtins__": {}}, {}))
+    except Exception:
+        return False
+
+
 def expand_event_macro(
     name: str,
     args: List[str],
@@ -280,33 +446,100 @@ def expand_event_macro(
         else:
             positional.append(arg)
 
+    positional_index = 0
     for index, (param, default) in enumerate(macro.params):
+        if default == VARARG_DEFAULT:
+            values[param] = ", ".join(positional[positional_index:])
+            positional_index = len(positional)
+            continue
         if param not in values:
-            if index < len(positional):
-                values[param] = positional[index]
+            if positional_index < len(positional):
+                values[param] = positional[positional_index]
+                positional_index += 1
             elif default is not None:
                 values[param] = default
             else:
                 values[param] = ""
 
     out: List[str] = []
-    skip_conditional = 0
+    conditional_stack: List[Tuple[bool, bool]] = []
+    local_label_args: List[str] = []
     for body_line in macro.body:
         stripped = body_line.strip()
-        if stripped.startswith((".if", ".else", ".endif", ".warning", ".set", ".purgem")):
-            if stripped.startswith(".if"):
-                skip_conditional += 1
-            elif stripped.startswith(".endif") and skip_conditional:
-                skip_conditional -= 1
+        if stripped.startswith((".warning", ".error", ".set", ".purgem")):
             continue
-        if skip_conditional:
+        if stripped.startswith(".ifb "):
+            value = values.get(stripped[len(".ifb "):].strip().lstrip("\\"), "")
+            conditional_stack.append((not value, not value))
+            continue
+        if stripped.startswith(".ifnb "):
+            value = values.get(stripped[len(".ifnb "):].strip().lstrip("\\"), "")
+            conditional_stack.append((bool(value), bool(value)))
+            continue
+        if stripped.startswith(".if "):
+            expr = stripped[len(".if "):].strip()
+            for param, value in values.items():
+                expr = expr.replace(f"\\{param}", value or "0")
+            condition = eval_macro_condition(expr, constants)
+            conditional_stack.append((condition, condition))
+            continue
+        if stripped.startswith(".elseif "):
+            if conditional_stack:
+                _active, branch_taken = conditional_stack[-1]
+                condition = False
+                if not branch_taken:
+                    expr = stripped[len(".elseif "):].strip()
+                    for param, value in values.items():
+                        expr = expr.replace(f"\\{param}", value or "0")
+                    condition = eval_macro_condition(expr, constants)
+                conditional_stack[-1] = (condition, branch_taken or condition)
+            continue
+        if stripped == ".else":
+            if conditional_stack:
+                _active, branch_taken = conditional_stack[-1]
+                conditional_stack[-1] = (not branch_taken, True)
+            continue
+        if stripped == ".endif":
+            if conditional_stack:
+                conditional_stack.pop()
+            continue
+        if conditional_stack and not all(active for active, _seen_else in conditional_stack):
             continue
 
         expanded = stripped
-        for param, value in values.items():
+        for param, value in sorted(values.items(), key=lambda item: len(item[0]), reverse=True):
             expanded = expanded.replace(f"\\{param}", value)
+        expanded = re.sub(r"\\@", str(counters.setdefault("macro_local_id", 0)), expanded)
 
-        if expanded.startswith(".byte ") or expanded.startswith(".2byte ") or expanded.startswith(".4byte ") or expanded.startswith(".space "):
+        if LABEL_RE.match(expanded):
+            if local_label_args:
+                local_label_args = []
+            continue
+
+        if re.search(r"\.L\w+_\d+_2\s*-\s*\.L\w+_\d+_1", expanded):
+            out.append(f".byte {len(split_args(values.get('argv', '')))}")
+            continue
+
+        if expanded.startswith(".2byte "):
+            operands = split_args(expanded[len(".2byte "):])
+            local_label_args = operands
+            if not operands:
+                continue
+            out.append(".2byte " + ", ".join(format_asm_expr(operand, constants) for operand in operands))
+            continue
+
+        if expanded.startswith((".byte ", ".4byte ")):
+            directive, operands_text = expanded.split(" ", 1)
+            operands = split_args(operands_text)
+            if directive == ".4byte":
+                function_symbols = load_function_symbols()
+                for operand in operands:
+                    if operand in function_symbols:
+                        out.append(f".functype {operand} (i32) -> ()")
+            out.append(f"{directive} " + ", ".join(format_asm_expr(operand, constants) for operand in operands))
+            continue
+
+        if expanded.startswith(".space "):
             out.append(substitute_constants(expanded, constants))
             continue
 
@@ -861,10 +1094,12 @@ def convert(text: str, source: Optional[Path] = None, emit_sizes: bool = True) -
     out = []
     constants = load_script_command_constants()
     script_command_functions = set(load_script_command_functions())
+    function_symbols = load_function_symbols()
     constants.update(load_special_constants())
     macros = load_event_macros(source)
     constants.update(load_movement_constants())
     constants.update(load_map_constants())
+    constants.update(load_source_constants(source))
     constants.update({
         "OBJ_KIND_NORMAL": 0,
         "OBJ_KIND_CLONE": 1,
@@ -993,6 +1228,8 @@ def convert(text: str, source: Optional[Path] = None, emit_sizes: bool = True) -
             symbol = stripped[len(".4byte "):].strip()
             if symbol in script_command_functions:
                 out.append(f".functype {symbol} (i32) -> (i32)")
+            elif symbol in function_symbols:
+                out.append(f".functype {symbol} (i32) -> ()")
         out.append(stripped)
 
     close_label()

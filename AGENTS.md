@@ -46,6 +46,14 @@ source tree and behavior as much as possible.
 - The root `.gitignore` already ignores `build/`, `*.o`, `*.elf`, `*.gba`,
   `*.map`, `*.sym`, and most generated asset extensions. Add focused ignore
   rules if new generated artifacts fall outside those patterns.
+- For every crash or gameplay bug, first identify the root cause and fix the
+  shared conversion/runtime/build layer that caused it. Do not patch individual
+  maps, events, cutscenes, battles, moves, or assets unless the root cause truly
+  is isolated to that one piece of original content.
+- Prefer fixes that apply automatically to whole classes of equivalent native
+  data, commands, assets, or runtime paths. When a bug presents in one example,
+  check for the underlying pattern and verify at least one representative path
+  instead of hardcoding that example.
 
 ## Build And Verification
 
