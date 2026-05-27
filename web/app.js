@@ -39,6 +39,10 @@ let instance;
 let memory;
 let u8;
 let u16;
+let statusText = 'loading wasm…';
+let lastFpsUpdate = performance.now();
+let renderedFrames = 0;
+let emulatedFrames = 0;
 
 function refreshViews() {
   u8 = new Uint8Array(memory.buffer);
@@ -535,8 +539,26 @@ async function boot() {
   refreshViews();
   writeKeys();
   instance.exports.AgbMain();
-  statusEl.textContent = `running — ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MiB wasm`;
+  statusText = `running — ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MiB wasm`;
+  statusEl.textContent = `${statusText} — 0 fps`;
   setInterval(tick, 1000 / 60);
+}
+
+function updateFps() {
+  renderedFrames++;
+  emulatedFrames += FRAMES_PER_TICK;
+
+  const now = performance.now();
+  const elapsed = now - lastFpsUpdate;
+  if (elapsed < 1000) return;
+
+  const fps = Math.round(renderedFrames * 1000 / elapsed);
+  const gameFps = Math.round(emulatedFrames * 1000 / elapsed);
+  const suffix = FRAMES_PER_TICK === 1 ? `${fps} fps` : `${fps} fps / ${gameFps} game fps`;
+  statusEl.textContent = `${statusText} — ${suffix}`;
+  lastFpsUpdate = now;
+  renderedFrames = 0;
+  emulatedFrames = 0;
 }
 
 function runFrames(frameCount, keyMask = 0) {
@@ -553,6 +575,7 @@ function tick() {
   try {
     runFrames(FRAMES_PER_TICK);
     render();
+    updateFps();
   } catch (error) {
     console.error(error);
     statusEl.textContent = error.stack || String(error);
