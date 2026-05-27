@@ -2008,6 +2008,10 @@ static void PrintControls(void)
 static void CB2_NamingScreen(void)
 {
     RunTasks();
+#if WASM
+    if (sNamingScreen == NULL)
+        return;
+#endif
     AnimateSprites();
     BuildOamBuffer();
     UpdatePaletteFade();

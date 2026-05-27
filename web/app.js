@@ -6,6 +6,7 @@ const VRAM = 0x06000000;
 const OAM = 0x07000000;
 const KEYINPUT = 0x04000130;
 const KEY_MASK = 0x03ff;
+const FRAMES_PER_TICK = Math.max(1, Number(new URLSearchParams(location.search).get('speed')) || 1);
 
 const buttons = {
   a: 1 << 0,
@@ -534,7 +535,9 @@ async function boot() {
 function tick() {
   try {
     writeKeys();
-    instance.exports.WasmRunFrame();
+    for (let i = 0; i < FRAMES_PER_TICK; i++) {
+      instance.exports.WasmRunFrame();
+    }
     pendingPresses.clear();
     render();
   } catch (error) {
