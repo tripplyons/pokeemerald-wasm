@@ -71,6 +71,41 @@ def load_movement_constants() -> Dict[str, int]:
     return constants
 
 
+def load_map_constants() -> Dict[str, int]:
+    constants = {}
+    define_re = re.compile(r"#define\s+(WARP_ID_[A-Z0-9_]+)\s+(.+)$")
+    enum_value = 0
+    in_enum = False
+    for line in (ROOT / "include/constants/maps.h").read_text().splitlines():
+        line = line.split("//", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("enum"):
+            in_enum = True
+            enum_value = 0
+            continue
+        if in_enum:
+            if line.startswith("};"):
+                in_enum = False
+                continue
+            entry = line.rstrip(",")
+            if not entry or entry == "{":
+                continue
+            name, sep, expr = entry.partition("=")
+            name = name.strip()
+            if not name:
+                continue
+            value = parse_int(expr, constants) if sep else enum_value
+            constants[name] = value
+            enum_value = value + 1
+            continue
+        match = define_re.match(line)
+        if match:
+            name, expr = match.groups()
+            constants[name] = parse_int(expr, constants)
+    return constants
+
+
 def preprocess(source: Path) -> str:
     first = subprocess.run(
         [str(ROOT / "tools/preproc/preproc"), str(source), "charmap.txt"],
@@ -734,6 +769,7 @@ def convert(text: str, emit_sizes: bool = True) -> str:
     constants.update(load_special_constants())
     macros = load_event_macros()
     constants.update(load_movement_constants())
+    constants.update(load_map_constants())
     constants.update({
         "OBJ_KIND_NORMAL": 0,
         "OBJ_KIND_CLONE": 1,
@@ -743,7 +779,6 @@ def convert(text: str, emit_sizes: bool = True) -> str:
         "NULL": 0,
         "FALSE": 0,
         "TRUE": 1,
-        "WARP_ID_NONE": 0x7F,
         "MSGBOX_SIGN": 3,
         "MSGBOX_DEFAULT": 4,
         "STEP_CB_TRUCK": 5,

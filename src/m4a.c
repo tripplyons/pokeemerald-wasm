@@ -1,5 +1,6 @@
 #include "global.h"
 #include "gba/m4a_internal.h"
+#include "constants/songs.h"
 
 extern const u8 gCgb3Vol[];
 
@@ -27,7 +28,7 @@ static void WasmMPlayStart(struct MusicPlayerInfo *mplayInfo)
         return;
 
     mplayInfo->ident = ID_NUMBER;
-    mplayInfo->status = 1;
+    mplayInfo->status = MUSICPLAYER_STATUS_TRACK;
 }
 
 static void WasmMPlayStop(struct MusicPlayerInfo *mplayInfo)
@@ -39,15 +40,20 @@ static void WasmMPlayStop(struct MusicPlayerInfo *mplayInfo)
     mplayInfo->status = 0;
 }
 
+static bool8 WasmSongUsesBgmPlayer(u16 songNum)
+{
+    return songNum == MUS_DUMMY || songNum >= MUS_LITTLEROOT_TEST;
+}
+
 void m4aSoundVSync(void) {}
 void m4aSoundVSyncOn(void) {}
 void m4aSoundVSyncOff(void) {}
 void m4aSoundInit(void) { SoundInit(&gSoundInfo); }
 void m4aSoundMain(void) {}
 void m4aSoundMode(u32 mode) {}
-void m4aSongNumStart(u16 n) { WasmMPlayStart(&gMPlayInfo_BGM); }
-void m4aSongNumStartOrChange(u16 n) { WasmMPlayStart(&gMPlayInfo_BGM); }
-void m4aSongNumStop(u16 n) { WasmMPlayStop(&gMPlayInfo_BGM); }
+void m4aSongNumStart(u16 n) { if (WasmSongUsesBgmPlayer(n)) WasmMPlayStart(&gMPlayInfo_BGM); }
+void m4aSongNumStartOrChange(u16 n) { if (WasmSongUsesBgmPlayer(n)) WasmMPlayStart(&gMPlayInfo_BGM); }
+void m4aSongNumStop(u16 n) { if (WasmSongUsesBgmPlayer(n)) WasmMPlayStop(&gMPlayInfo_BGM); }
 void m4aMPlayAllStop(void) { WasmMPlayStop(&gMPlayInfo_BGM); }
 void m4aMPlayContinue(struct MusicPlayerInfo *mplayInfo) { WasmMPlayStart(mplayInfo); }
 void m4aMPlayFadeOut(struct MusicPlayerInfo *mplayInfo, u16 speed) { WasmMPlayStop(mplayInfo); }
