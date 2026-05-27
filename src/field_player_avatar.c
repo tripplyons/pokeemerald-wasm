@@ -38,7 +38,11 @@ EWRAM_DATA struct ObjectEvent gObjectEvents[OBJECT_EVENTS_COUNT] = {};
 EWRAM_DATA struct PlayerAvatar gPlayerAvatar = {};
 
 // static declarations
+#if WASM
+static bool8 ObjectEventCB2_NoMovement2(struct ObjectEvent *, struct Sprite *);
+#else
 static u8 ObjectEventCB2_NoMovement2(void);
+#endif
 static bool8 TryInterruptObjectEventSpecialAnim(struct ObjectEvent *, u8);
 static void npc_clear_strange_bits(struct ObjectEvent *);
 static void MovePlayerAvatarUsingKeypadInput(u8, u16, u16);
@@ -321,13 +325,24 @@ static bool8 (*const sPlayerAvatarSecretBaseMatSpin[])(struct Task *, struct Obj
 
 void MovementType_Player(struct Sprite *sprite)
 {
+#if WASM
+    UpdateObjectEventCurrentMovement(&gObjectEvents[sprite->data[0]], sprite, ObjectEventCB2_NoMovement2);
+#else
     UpdateObjectEventCurrentMovement(&gObjectEvents[sprite->data[0]], sprite, (bool8 (*)(struct ObjectEvent *, struct Sprite *))ObjectEventCB2_NoMovement2);
+#endif
 }
 
+#if WASM
+static bool8 ObjectEventCB2_NoMovement2(struct ObjectEvent *objectEvent, struct Sprite *sprite)
+{
+    return FALSE;
+}
+#else
 static u8 ObjectEventCB2_NoMovement2(void)
 {
     return 0;
 }
+#endif
 
 void PlayerStep(u8 direction, u16 newKeys, u16 heldKeys)
 {

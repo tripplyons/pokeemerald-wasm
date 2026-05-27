@@ -31,12 +31,20 @@
 #include "constants/event_bg.h"
 #include "constants/event_objects.h"
 #include "constants/field_poison.h"
+#include "constants/flags.h"
+#include "constants/heal_locations.h"
+#include "constants/maps.h"
 #include "constants/map_types.h"
 #include "constants/songs.h"
 #include "constants/trainer_hill.h"
+#include "constants/vars.h"
 
 static EWRAM_DATA u8 sWildEncounterImmunitySteps = 0;
 static EWRAM_DATA u16 sPrevMetatileBehavior = 0;
+
+#if WASM
+extern const u8 InsideOfTruck_EventScript_SetIntroFlags[];
+#endif
 
 COMMON_DATA u8 gSelectedObjectEvent = 0;
 
@@ -501,6 +509,40 @@ static bool8 TryStartCoordEventScript(struct MapPosition *position)
 
     if (script == NULL)
         return FALSE;
+#if WASM
+    if (script == InsideOfTruck_EventScript_SetIntroFlags && VarGet(VAR_LITTLEROOT_INTRO_STATE) == 0)
+    {
+        if (gSaveBlock2Ptr->playerGender == MALE)
+        {
+            SetLastHealLocationWarp(HEAL_LOCATION_LITTLEROOT_TOWN_BRENDANS_HOUSE_2F);
+            VarSet(VAR_LITTLEROOT_INTRO_STATE, 1);
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_MAYS_HOUSE_MOM);
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_MAYS_HOUSE_TRUCK);
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_BRENDANS_HOUSE_RIVAL_MOM);
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_BRENDANS_HOUSE_RIVAL_SIBLING);
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_BRENDANS_HOUSE_2F_POKE_BALL);
+            VarSet(VAR_LITTLEROOT_HOUSES_STATE_BRENDAN, 1);
+            SetDynamicWarp(0, MAP_GROUP(MAP_LITTLEROOT_TOWN), MAP_NUM(MAP_LITTLEROOT_TOWN), WARP_ID_NONE);
+            gSaveBlock1Ptr->dynamicWarp.x = 3;
+            gSaveBlock1Ptr->dynamicWarp.y = 10;
+        }
+        else
+        {
+            SetLastHealLocationWarp(HEAL_LOCATION_LITTLEROOT_TOWN_MAYS_HOUSE_2F);
+            VarSet(VAR_LITTLEROOT_INTRO_STATE, 2);
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_BRENDANS_HOUSE_MOM);
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_BRENDANS_HOUSE_TRUCK);
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_MAYS_HOUSE_RIVAL_MOM);
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_MAYS_HOUSE_RIVAL_SIBLING);
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_MAYS_HOUSE_2F_POKE_BALL);
+            VarSet(VAR_LITTLEROOT_HOUSES_STATE_MAY, 1);
+            SetDynamicWarp(0, MAP_GROUP(MAP_LITTLEROOT_TOWN), MAP_NUM(MAP_LITTLEROOT_TOWN), WARP_ID_NONE);
+            gSaveBlock1Ptr->dynamicWarp.x = 12;
+            gSaveBlock1Ptr->dynamicWarp.y = 10;
+        }
+        return FALSE;
+    }
+#endif
     ScriptContext_SetupScript(script);
     return TRUE;
 }

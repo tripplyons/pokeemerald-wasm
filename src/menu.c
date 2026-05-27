@@ -1761,6 +1761,11 @@ bool8 FreeTempTileDataBuffersIfPossible(void)
 {
     int i;
 
+#if WASM
+    if (IsDma3ManagerBusyWithBgCopy())
+        ProcessDma3Requests();
+#endif
+
     if (!IsDma3ManagerBusyWithBgCopy())
     {
         if (sTempTileDataBufferIdx)
