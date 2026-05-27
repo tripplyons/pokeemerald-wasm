@@ -211,7 +211,7 @@ C_SRCS := $(foreach src,$(C_SRCS_IN),$(if $(findstring .inc.c,$(src)),,$(src)))
 C_OBJS := $(patsubst $(C_SUBDIR)/%.c,$(C_BUILDDIR)/%.o,$(C_SRCS))
 WASM_C_OBJS := $(patsubst $(C_SUBDIR)/%.c,$(WASM_OBJ_DIR)/%.o,$(C_SRCS))
 WASM_C_OBJS += $(WASM_OBJ_DIR)/generated_text.o
-WASM_DATA_OBJS := $(WASM_OBJ_DIR)/maps.o $(WASM_OBJ_DIR)/map_events.o $(WASM_OBJ_DIR)/inside_truck_scripts.o
+WASM_DATA_OBJS := $(WASM_OBJ_DIR)/maps.o $(WASM_OBJ_DIR)/map_events.o $(WASM_OBJ_DIR)/early_map_scripts.o
 
 C_ASM_SRCS := $(wildcard $(C_SUBDIR)/*.s $(C_SUBDIR)/*/*.s $(C_SUBDIR)/*/*/*.s)
 C_ASM_OBJS := $(patsubst $(C_SUBDIR)/%.s,$(C_BUILDDIR)/%.o,$(C_ASM_SRCS))
@@ -273,10 +273,10 @@ $(WASM_OBJ_DIR)/map_events.o: data/map_events.s tools/wasm_asm_data.py | generat
 	uv run python tools/wasm_asm_data.py $< $(WASM_BUILD_DIR)/map_events.wasm.s
 	$(WASM_CC) --target=wasm32-unknown-unknown -c $(WASM_BUILD_DIR)/map_events.wasm.s -o $@
 
-$(WASM_OBJ_DIR)/inside_truck_scripts.o: data/wasm/inside_truck_scripts.s tools/wasm_asm_data.py
+$(WASM_OBJ_DIR)/early_map_scripts.o: data/wasm/early_map_scripts.s tools/wasm_asm_data.py
 	@mkdir -p $(dir $@) $(WASM_BUILD_DIR)
-	uv run python tools/wasm_asm_data.py $< $(WASM_BUILD_DIR)/inside_truck_scripts.wasm.s
-	$(WASM_CC) --target=wasm32-unknown-unknown -c $(WASM_BUILD_DIR)/inside_truck_scripts.wasm.s -o $@
+	uv run python tools/wasm_asm_data.py $< $(WASM_BUILD_DIR)/early_map_scripts.wasm.s
+	$(WASM_CC) --target=wasm32-unknown-unknown -c $(WASM_BUILD_DIR)/early_map_scripts.wasm.s -o $@
 
 clean-wasm:
 	rm -rf $(WASM_BUILD_DIR)

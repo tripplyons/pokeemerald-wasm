@@ -22,6 +22,25 @@ def load_script_command_constants() -> Dict[str, int]:
     return constants
 
 
+def load_movement_constants() -> Dict[str, int]:
+    constants = {}
+    define_re = re.compile(r"#define\s+(MOVEMENT_ACTION_[A-Z0-9_]+)\s+(.+)$")
+    for line in (ROOT / "include/constants/event_object_movement.h").read_text().splitlines():
+        line = line.split("//", 1)[0].strip()
+        match = define_re.match(line)
+        if not match:
+            continue
+        name, expr = match.groups()
+        constants[name] = parse_int(expr, constants)
+    for line in (ROOT / "asm/macros/movement.inc").read_text().splitlines():
+        line = strip_at_comment(line).strip()
+        if not line.startswith("create_movement_action "):
+            continue
+        name, value = split_args(line[len("create_movement_action "):])
+        constants[name] = parse_int(value, constants)
+    return constants
+
+
 def preprocess(source: Path) -> str:
     first = subprocess.run(
         [str(ROOT / "tools/preproc/preproc"), str(source), "charmap.txt"],
@@ -62,8 +81,15 @@ def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, i
         script_type, script = split_args(stripped[len("map_script "):])
         return [f".byte {script_type}", f".4byte {script}"]
 
+    if stripped.startswith("map_script_2 "):
+        var, value, script = split_args(stripped[len("map_script_2 "):])
+        return [f".2byte {var}", f".2byte {value}", f".4byte {script}"]
+
     if stripped == "end":
         return [f".byte {parse_int('SCR_OP_END', constants)}"]
+
+    if stripped == "return":
+        return [f".byte {parse_int('SCR_OP_RETURN', constants)}"]
 
     if stripped == "lockall":
         return [f".byte {parse_int('SCR_OP_LOCKALL', constants)}"]
@@ -73,6 +99,114 @@ def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, i
 
     if stripped == "checkplayergender":
         return [f".byte {parse_int('SCR_OP_CHECKPLAYERGENDER', constants)}"]
+
+    if stripped == "waitstate":
+        return [f".byte {parse_int('SCR_OP_WAITSTATE', constants)}"]
+
+    if stripped == "waitmessage":
+        return [f".byte {parse_int('SCR_OP_WAITMESSAGE', constants)}"]
+
+    if stripped == "waitbuttonpress":
+        return [f".byte {parse_int('SCR_OP_WAITBUTTONPRESS', constants)}"]
+
+    if stripped == "closemessage":
+        return [f".byte {parse_int('SCR_OP_CLOSEMESSAGE', constants)}"]
+
+    if stripped == "waitdooranim":
+        return [f".byte {parse_int('SCR_OP_WAITDOORANIM', constants)}"]
+
+    if stripped == "lock":
+        return [f".byte {parse_int('SCR_OP_LOCK', constants)}"]
+
+    if stripped == "release":
+        return [f".byte {parse_int('SCR_OP_RELEASE', constants)}"]
+
+    if stripped == "faceplayer":
+        return [f".byte {parse_int('SCR_OP_FACEPLAYER', constants)}"]
+
+    if stripped == "hideplayer":
+        return [f".byte {parse_int('SCR_OP_HIDEOBJECTAT', constants)}", ".2byte 255", ".byte 0", ".byte 0"]
+
+    if stripped == "showplayer":
+        return [f".byte {parse_int('SCR_OP_SHOWOBJECTAT', constants)}", ".2byte 255", ".byte 0", ".byte 0"]
+
+    if stripped.startswith("call "):
+        destination = stripped[len("call "):].strip()
+        return [f".byte {parse_int('SCR_OP_CALL', constants)}", f".4byte {destination}"]
+
+    if stripped.startswith("goto "):
+        destination = stripped[len("goto "):].strip()
+        return [f".byte {parse_int('SCR_OP_GOTO', constants)}", f".4byte {destination}"]
+
+    if stripped.startswith("goto_if "):
+        condition, destination = split_args(stripped[len("goto_if "):])
+        return [f".byte {parse_int('SCR_OP_GOTO_IF', constants)}", f".byte {condition}", f".4byte {destination}"]
+
+    if stripped.startswith("call_if "):
+        condition, destination = split_args(stripped[len("call_if "):])
+        return [f".byte {parse_int('SCR_OP_CALL_IF', constants)}", f".byte {condition}", f".4byte {destination}"]
+
+    if stripped.startswith("call_if_unset "):
+        flag, destination = split_args(stripped[len("call_if_unset "):])
+        return [
+            f".byte {parse_int('SCR_OP_CHECKFLAG', constants)}",
+            f".2byte {flag}",
+            f".byte {parse_int('SCR_OP_CALL_IF', constants)}",
+            ".byte 0",
+            f".4byte {destination}",
+        ]
+
+    if stripped.startswith("call_if_set "):
+        flag, destination = split_args(stripped[len("call_if_set "):])
+        return [
+            f".byte {parse_int('SCR_OP_CHECKFLAG', constants)}",
+            f".2byte {flag}",
+            f".byte {parse_int('SCR_OP_CALL_IF', constants)}",
+            ".byte 1",
+            f".4byte {destination}",
+        ]
+
+    if stripped.startswith("call_if_eq "):
+        var, value, destination = split_args(stripped[len("call_if_eq "):])
+        return [
+            f".byte {parse_int('SCR_OP_COMPARE_VAR_TO_VALUE', constants)}",
+            f".2byte {var}",
+            f".2byte {value}",
+            f".byte {parse_int('SCR_OP_CALL_IF', constants)}",
+            ".byte 1",
+            f".4byte {destination}",
+        ]
+
+    if stripped.startswith("goto_if_set "):
+        flag, destination = split_args(stripped[len("goto_if_set "):])
+        return [
+            f".byte {parse_int('SCR_OP_CHECKFLAG', constants)}",
+            f".2byte {flag}",
+            f".byte {parse_int('SCR_OP_GOTO_IF', constants)}",
+            ".byte 1",
+            f".4byte {destination}",
+        ]
+
+    if stripped.startswith("goto_if_unset "):
+        flag, destination = split_args(stripped[len("goto_if_unset "):])
+        return [
+            f".byte {parse_int('SCR_OP_CHECKFLAG', constants)}",
+            f".2byte {flag}",
+            f".byte {parse_int('SCR_OP_GOTO_IF', constants)}",
+            ".byte 0",
+            f".4byte {destination}",
+        ]
+
+    if stripped.startswith("goto_if_ne "):
+        var, value, destination = split_args(stripped[len("goto_if_ne "):])
+        return [
+            f".byte {parse_int('SCR_OP_COMPARE_VAR_TO_VALUE', constants)}",
+            f".2byte {var}",
+            f".2byte {value}",
+            f".byte {parse_int('SCR_OP_GOTO_IF', constants)}",
+            ".byte 5",
+            f".4byte {destination}",
+        ]
 
     if stripped.startswith("setmetatile "):
         x, y, metatile, impassable = split_args(stripped[len("setmetatile "):])
@@ -86,6 +220,10 @@ def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, i
         flag = stripped[len("setflag "):].strip()
         return [f".byte {parse_int('SCR_OP_SETFLAG', constants)}", f".2byte {flag}"]
 
+    if stripped.startswith("clearflag "):
+        flag = stripped[len("clearflag "):].strip()
+        return [f".byte {parse_int('SCR_OP_CLEARFLAG', constants)}", f".2byte {flag}"]
+
     if stripped.startswith("setrespawn "):
         heal_location = stripped[len("setrespawn "):].strip()
         return [f".byte {parse_int('SCR_OP_SETRESPAWN', constants)}", f".2byte {heal_location}"]
@@ -93,6 +231,33 @@ def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, i
     if stripped.startswith("setvar "):
         var, value = split_args(stripped[len("setvar "):])[:2]
         return [f".byte {parse_int('SCR_OP_SETVAR', constants)}", f".2byte {var}", f".2byte {value}"]
+
+    if stripped.startswith("copyvar "):
+        destination, source = split_args(stripped[len("copyvar "):])[:2]
+        return [f".byte {parse_int('SCR_OP_COPYVAR', constants)}", f".2byte {destination}", f".2byte {source}"]
+
+    if stripped.startswith("setorcopyvar "):
+        destination, source = split_args(stripped[len("setorcopyvar "):])[:2]
+        return [f".byte {parse_int('SCR_OP_SETORCOPYVAR', constants)}", f".2byte {destination}", f".2byte {source}"]
+
+    if stripped.startswith("specialvar "):
+        var, special = split_args(stripped[len("specialvar "):])[:2]
+        return [f".byte {parse_int('SCR_OP_SPECIALVAR', constants)}", f".2byte {var}", f".2byte {special}"]
+
+    if stripped.startswith("special "):
+        special = stripped[len("special "):].strip()
+        return [f".byte {parse_int('SCR_OP_SPECIAL', constants)}", f".2byte {special}"]
+
+    if stripped.startswith("playse "):
+        song = stripped[len("playse "):].strip()
+        return [f".byte {parse_int('SCR_OP_PLAYSE', constants)}", f".2byte {song}"]
+
+    if stripped.startswith("playfanfare "):
+        song = stripped[len("playfanfare "):].strip()
+        return [f".byte {parse_int('SCR_OP_PLAYFANFARE', constants)}", f".2byte {song}"]
+
+    if stripped == "waitfanfare":
+        return [f".byte {parse_int('SCR_OP_WAITFANFARE', constants)}"]
 
     if stripped.startswith("goto_if_eq "):
         var, value, destination = split_args(stripped[len("goto_if_eq "):])
@@ -123,6 +288,42 @@ def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, i
             lines.extend([f".byte {parse_int('WARP_ID_NONE', constants)}", ".2byte -1", ".2byte -1"])
         return lines
 
+    if stripped.startswith("warpsilent "):
+        args = split_args(stripped[len("warpsilent "):])
+        map_value = parse_int(args[0], constants)
+        lines = [
+            f".byte {parse_int('SCR_OP_WARPSILENT', constants)}",
+            f".byte {map_value >> 8}",
+            f".byte {map_value & 0xFF}",
+        ]
+        if len(args) == 2:
+            lines.extend([f".byte {args[1]}", ".2byte -1", ".2byte -1"])
+        elif len(args) == 3:
+            lines.extend([f".byte {parse_int('WARP_ID_NONE', constants)}", f".2byte {args[1]}", f".2byte {args[2]}"])
+        elif len(args) == 4:
+            lines.extend([f".byte {args[1]}", f".2byte {args[2]}", f".2byte {args[3]}"])
+        else:
+            lines.extend([f".byte {parse_int('WARP_ID_NONE', constants)}", ".2byte -1", ".2byte -1"])
+        return lines
+
+    if stripped.startswith("warp "):
+        args = split_args(stripped[len("warp "):])
+        map_value = parse_int(args[0], constants)
+        lines = [
+            f".byte {parse_int('SCR_OP_WARP', constants)}",
+            f".byte {map_value >> 8}",
+            f".byte {map_value & 0xFF}",
+        ]
+        if len(args) == 2:
+            lines.extend([f".byte {args[1]}", ".2byte -1", ".2byte -1"])
+        elif len(args) == 3:
+            lines.extend([f".byte {parse_int('WARP_ID_NONE', constants)}", f".2byte {args[1]}", f".2byte {args[2]}"])
+        elif len(args) == 4:
+            lines.extend([f".byte {args[1]}", f".2byte {args[2]}", f".2byte {args[3]}"])
+        else:
+            lines.extend([f".byte {parse_int('WARP_ID_NONE', constants)}", ".2byte -1", ".2byte -1"])
+        return lines
+
     if stripped.startswith("msgbox "):
         text, msgbox_type = split_args(stripped[len("msgbox "):])
         return [
@@ -132,6 +333,67 @@ def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, i
             f".byte {parse_int('SCR_OP_CALL_STD', constants)}",
             f".byte {msgbox_type}",
         ]
+
+    if stripped.startswith("message "):
+        text = stripped[len("message "):].strip()
+        return [f".byte {parse_int('SCR_OP_MESSAGE', constants)}", f".4byte {text}"]
+
+    if stripped.startswith("delay "):
+        value = stripped[len("delay "):].strip()
+        return [f".byte {parse_int('SCR_OP_DELAY', constants)}", f".2byte {value}"]
+
+    if stripped.startswith("applymovement "):
+        local_id, movements = split_args(stripped[len("applymovement "):])[:2]
+        return [f".byte {parse_int('SCR_OP_APPLYMOVEMENT', constants)}", f".2byte {local_id}", f".4byte {movements}"]
+
+    if stripped.startswith("waitmovement"):
+        args = split_args(stripped[len("waitmovement"):].strip())
+        local_id = args[0] if args and args[0] else "0"
+        return [f".byte {parse_int('SCR_OP_WAITMOVEMENT', constants)}", f".2byte {local_id}"]
+
+    if stripped.startswith("addobject "):
+        local_id = split_args(stripped[len("addobject "):])[0]
+        return [f".byte {parse_int('SCR_OP_ADDOBJECT', constants)}", f".2byte {local_id}"]
+
+    if stripped.startswith("removeobject "):
+        local_id = split_args(stripped[len("removeobject "):])[0]
+        return [f".byte {parse_int('SCR_OP_REMOVEOBJECT', constants)}", f".2byte {local_id}"]
+
+    if stripped.startswith("setobjectxyperm "):
+        local_id, x, y = split_args(stripped[len("setobjectxyperm "):])
+        return [f".byte {parse_int('SCR_OP_SETOBJECTXYPERM', constants)}", f".2byte {local_id}", f".2byte {x}", f".2byte {y}"]
+
+    if stripped.startswith("setobjectxy "):
+        local_id, x, y = split_args(stripped[len("setobjectxy "):])
+        return [f".byte {parse_int('SCR_OP_SETOBJECTXY', constants)}", f".2byte {local_id}", f".2byte {x}", f".2byte {y}"]
+
+    if stripped.startswith("setobjectmovementtype "):
+        local_id, movement_type = split_args(stripped[len("setobjectmovementtype "):])
+        return [f".byte {parse_int('SCR_OP_SETOBJECTMOVEMENTTYPE', constants)}", f".2byte {local_id}", f".byte {movement_type}"]
+
+    if stripped.startswith("setdooropen "):
+        x, y = split_args(stripped[len("setdooropen "):])
+        return [f".byte {parse_int('SCR_OP_SETDOOROPEN', constants)}", f".2byte {x}", f".2byte {y}"]
+
+    if stripped.startswith("setdoorclosed "):
+        x, y = split_args(stripped[len("setdoorclosed "):])
+        return [f".byte {parse_int('SCR_OP_SETDOORCLOSED', constants)}", f".2byte {x}", f".2byte {y}"]
+
+    if stripped.startswith("opendoor "):
+        x, y = split_args(stripped[len("opendoor "):])
+        return [f".byte {parse_int('SCR_OP_OPENDOOR', constants)}", f".2byte {x}", f".2byte {y}"]
+
+    if stripped.startswith("closedoor "):
+        x, y = split_args(stripped[len("closedoor "):])
+        return [f".byte {parse_int('SCR_OP_CLOSEDOOR', constants)}", f".2byte {x}", f".2byte {y}"]
+
+    if stripped.startswith("hideobjectat "):
+        local_id, map_id = split_args(stripped[len("hideobjectat "):])
+        map_value = parse_int(map_id, constants)
+        return [f".byte {parse_int('SCR_OP_HIDEOBJECTAT', constants)}", f".2byte {local_id}", f".byte {map_value >> 8}", f".byte {map_value & 0xFF}"]
+
+    if stripped in constants and stripped.startswith(("face_", "walk_", "jump_", "delay_", "step_", "emote_", "set_", "hide_", "show_", "lock_", "unlock_", "disable_", "enable_", "restore_")):
+        return [f".byte {parse_int(stripped, constants)}"]
 
     if stripped == "reset_map_events":
         counters.update(npcs=0, warps=0, traps=0, signs=0)
@@ -278,6 +540,7 @@ def strip_at_comment(line: str) -> str:
 def convert(text: str) -> str:
     out = []
     constants = load_script_command_constants()
+    constants.update(load_movement_constants())
     constants.update({
         "OBJ_KIND_NORMAL": 0,
         "OBJ_KIND_CLONE": 1,
@@ -285,9 +548,16 @@ def convert(text: str) -> str:
         "BG_EVENT_SECRET_BASE": 8,
         "FLAG_HIDDEN_ITEMS_START": 0x1F4,
         "NULL": 0,
+        "FALSE": 0,
+        "TRUE": 1,
         "WARP_ID_NONE": 0x7F,
         "MSGBOX_SIGN": 3,
+        "MSGBOX_DEFAULT": 4,
         "STEP_CB_TRUCK": 5,
+        "SE_LEDGE": 10,
+        "LOCALID_PLAYER": 255,
+        "LOCALID_NONE": 0,
+        "MOVEMENT_ACTION_STEP_END": 0xFE,
     })
     counters = {"npcs": 0, "warps": 0, "traps": 0, "signs": 0}
     open_label = None
@@ -346,7 +616,7 @@ def convert(text: str) -> str:
             )
 
         macro = expand_macro(stripped, constants, counters)
-        if macro:
+        if macro is not None:
             out.extend(macro)
             continue
 
