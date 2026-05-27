@@ -3,11 +3,17 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 LABEL_RE = re.compile(r"^([A-Za-z_.$][\w.$]*)(::?)\s*(.*)$")
 ASSIGN_RE = re.compile(r"^([A-Za-z_.$][\w.$]*)\s*=\s*(.+)$")
+
+
+class AsmMacro:
+    def __init__(self, params: List[Tuple[str, Optional[str]]], body: List[str]):
+        self.params = params
+        self.body = body
 
 
 def load_script_command_constants() -> Dict[str, int]:
@@ -19,6 +25,30 @@ def load_script_command_constants() -> Dict[str, int]:
         if line.startswith("script_cmd_table_entry "):
             constants[line.split()[1]] = value
             value += 1
+    return constants
+
+
+def load_script_command_functions() -> List[str]:
+    functions = []
+    for line in (ROOT / "data/script_cmd_table.inc").read_text().splitlines():
+        line = line.split("@", 1)[0].strip()
+        if not line.startswith("script_cmd_table_entry "):
+            continue
+        functions.append(line.split()[2])
+    return functions
+
+
+def load_special_constants() -> Dict[str, int]:
+    constants = {}
+    value = 0
+    for line in (ROOT / "data/specials.inc").read_text().splitlines():
+        line = strip_at_comment(line).strip()
+        if not line.startswith("def_special "):
+            continue
+        name = split_args(line[len("def_special "):])[0]
+        constants[f"SPECIAL_{name}"] = value
+        constants[f"SPECIAL_WAITSTATE_{name}"] = 0
+        value += 1
     return constants
 
 
@@ -73,10 +103,165 @@ def parse_int(expr: str, constants: Dict[str, int]) -> int:
 
 
 def split_args(text: str) -> List[str]:
-    return [arg.strip() for arg in text.split(",")]
+    if not text:
+        return []
+    args = [arg.strip() for arg in text.split(",")]
+    while args and args[-1] == "":
+        args.pop()
+    return args
 
 
-def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, int]) -> Optional[List[str]]:
+def parse_macro_args(name: str, text: str, macros: Dict[str, "AsmMacro"]) -> List[str]:
+    if "," in text or name not in macros:
+        return split_args(text)
+    if len(macros[name].params) <= 1:
+        return [text.strip()] if text.strip() else []
+    if re.search(r"\s[+\-*/]\s|[()]", text):
+        return [text.strip()]
+    return text.split()
+
+
+def load_event_macros() -> Dict[str, AsmMacro]:
+    macros: Dict[str, AsmMacro] = {}
+    for path in sorted((ROOT / "asm/macros").glob("**/*.inc")):
+        current_name = None
+        current_params: List[Tuple[str, Optional[str]]] = []
+        current_body: List[str] = []
+        for raw in path.read_text().splitlines():
+            stripped = strip_at_comment(raw).strip()
+            if not stripped:
+                continue
+            if current_name is None:
+                if not stripped.startswith(".macro "):
+                    continue
+                signature = stripped[len(".macro "):]
+                name, _, params_text = signature.partition(" ")
+                params = []
+                for param in split_args(params_text):
+                    if not param:
+                        continue
+                    if param.endswith(":req"):
+                        param = param[:-4]
+                    if "=" in param:
+                        param_name, default = param.split("=", 1)
+                        params.append((param_name.strip(), default.strip()))
+                    else:
+                        params.append((param.strip(), None))
+                current_name = name
+                current_params = params
+                current_body = []
+                continue
+
+            if stripped == ".endm":
+                macros[current_name] = AsmMacro(current_params, current_body)
+                current_name = None
+                continue
+            current_body.append(stripped)
+
+    return macros
+
+
+def substitute_constants(line: str, constants: Dict[str, int]) -> str:
+    return re.sub(
+        r"\b[A-Z][A-Z0-9_]*\b",
+        lambda match: str(constants.get(match.group(0), match.group(0))),
+        line,
+    )
+
+
+def expand_event_macro(
+    name: str,
+    args: List[str],
+    macros: Dict[str, AsmMacro],
+    constants: Dict[str, int],
+    depth: int = 0,
+) -> Optional[List[str]]:
+    if depth > 8 or name not in macros:
+        return None
+
+    macro = macros[name]
+    values = {}
+    positional = []
+    for arg in args:
+        if "=" in arg:
+            key, value = arg.split("=", 1)
+            values[key.strip()] = value.strip()
+        else:
+            positional.append(arg)
+
+    for index, (param, default) in enumerate(macro.params):
+        if param not in values:
+            if index < len(positional):
+                values[param] = positional[index]
+            elif default is not None:
+                values[param] = default
+            else:
+                values[param] = ""
+
+    out: List[str] = []
+    skip_conditional = 0
+    for body_line in macro.body:
+        stripped = body_line.strip()
+        if stripped.startswith((".if", ".else", ".endif", ".warning", ".set", ".purgem")):
+            if stripped.startswith(".if"):
+                skip_conditional += 1
+            elif stripped.startswith(".endif") and skip_conditional:
+                skip_conditional -= 1
+            continue
+        if skip_conditional:
+            continue
+
+        expanded = stripped
+        for param, value in values.items():
+            expanded = expanded.replace(f"\\{param}", value)
+
+        if expanded.startswith(".byte ") or expanded.startswith(".2byte ") or expanded.startswith(".4byte ") or expanded.startswith(".space "):
+            out.append(substitute_constants(expanded, constants))
+            continue
+
+        nested_name, _, nested_args = expanded.partition(" ")
+        if nested_name == "map":
+            map_value = parse_int(nested_args.strip(), constants)
+            out.extend([f".byte {map_value >> 8}", f".byte {map_value & 0xFF}"])
+            continue
+        if nested_name == "formatwarp":
+            warp_args = split_args(nested_args)
+            if warp_args:
+                map_value = parse_int(warp_args[0], constants)
+                out.extend([f".byte {map_value >> 8}", f".byte {map_value & 0xFF}"])
+                if len(warp_args) == 1:
+                    out.extend([f".byte {parse_int('WARP_ID_NONE', constants)}", ".2byte -1", ".2byte -1"])
+                elif len(warp_args) == 2:
+                    out.extend([f".byte {warp_args[1]}", ".2byte -1", ".2byte -1"])
+                elif len(warp_args) == 3:
+                    out.extend([f".byte {parse_int('WARP_ID_NONE', constants)}", f".2byte {warp_args[1]}", f".2byte {warp_args[2]}"])
+                else:
+                    out.extend([f".byte {warp_args[1]}", f".2byte {warp_args[2]}", f".2byte {warp_args[3]}"])
+                continue
+        nested = expand_event_macro(nested_name, parse_macro_args(nested_name, nested_args, macros), macros, constants, depth + 1)
+        if nested is None:
+            return None
+        out.extend(nested)
+
+    return out
+
+
+def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, int], macros: Dict[str, AsmMacro]) -> Optional[List[str]]:
+    if stripped.startswith("script_cmd_table_entry "):
+        if not constants.get("ALLOCATE_SCRIPT_CMD_TABLE", 0):
+            return []
+        args = split_args(stripped[len("script_cmd_table_entry "):])
+        if len(args) == 1:
+            args = args[0].split()
+        _constant, function = args[:2]
+        return [f".functype {function} (i32) -> (i32)", f".4byte {function}"]
+
+    if stripped.startswith("def_special "):
+        if not constants.get("ALLOCATE_SPECIAL_TABLE", 0):
+            return []
+        special = split_args(stripped[len("def_special "):])[0]
+        return [f".functype {special} () -> (i32)", f".4byte {special}"]
+
     if stripped.startswith("map_script "):
         script_type, script = split_args(stripped[len("map_script "):])
         return [f".byte {script_type}", f".4byte {script}"]
@@ -392,7 +577,7 @@ def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, i
         map_value = parse_int(map_id, constants)
         return [f".byte {parse_int('SCR_OP_HIDEOBJECTAT', constants)}", f".2byte {local_id}", f".byte {map_value >> 8}", f".byte {map_value & 0xFF}"]
 
-    if stripped in constants and stripped.startswith(("face_", "walk_", "jump_", "delay_", "step_", "emote_", "set_", "hide_", "show_", "lock_", "unlock_", "disable_", "enable_", "restore_")):
+    if stripped in constants:
         return [f".byte {parse_int(stripped, constants)}"]
 
     if stripped == "reset_map_events":
@@ -519,6 +704,11 @@ def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, i
         map_value = parse_int(stripped[len("map "):], constants)
         return [f".byte {map_value >> 8}", f".byte {map_value & 0xFF}"]
 
+    name, _, args = stripped.partition(" ")
+    expanded = expand_event_macro(name, parse_macro_args(name, args, macros), macros, constants)
+    if expanded is not None:
+        return expanded
+
     return None
 
 
@@ -537,9 +727,12 @@ def strip_at_comment(line: str) -> str:
     return line.rstrip()
 
 
-def convert(text: str) -> str:
+def convert(text: str, emit_sizes: bool = True) -> str:
     out = []
     constants = load_script_command_constants()
+    script_command_functions = set(load_script_command_functions())
+    constants.update(load_special_constants())
+    macros = load_event_macros()
     constants.update(load_movement_constants())
     constants.update({
         "OBJ_KIND_NORMAL": 0,
@@ -561,21 +754,47 @@ def convert(text: str) -> str:
     })
     counters = {"npcs": 0, "warps": 0, "traps": 0, "signs": 0}
     open_label = None
+    open_label_sized = False
+    conditional_stack: List[bool] = []
 
     def close_label():
-        nonlocal open_label
-        if open_label:
+        nonlocal open_label, open_label_sized
+        if open_label_sized and open_label:
             out.append(f".size {open_label}, .-{open_label}")
-            open_label = None
+        open_label = None
+        open_label_sized = False
 
     skip_macro = 0
     for raw in text.splitlines():
         is_global_label = "; .global" in raw
         line = strip_at_comment(raw)
-        if not line or line.startswith("#"):
+        if not line:
             continue
 
         stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if stripped.startswith(".if "):
+            expr = stripped[len(".if "):].strip()
+            try:
+                conditional_stack.append(bool(eval(expr, {"__builtins__": {}}, constants)))
+            except Exception:
+                conditional_stack.append(True)
+            continue
+        if stripped.startswith(".ifndef "):
+            name = stripped[len(".ifndef "):].strip()
+            conditional_stack.append(name not in constants)
+            continue
+        if stripped == ".else":
+            if conditional_stack:
+                conditional_stack[-1] = not conditional_stack[-1]
+            continue
+        if stripped == ".endif":
+            if conditional_stack:
+                conditional_stack.pop()
+            continue
+        if conditional_stack and not all(conditional_stack):
+            continue
         if skip_macro:
             if stripped.startswith(".macro "):
                 skip_macro += 1
@@ -587,6 +806,7 @@ def convert(text: str) -> str:
             continue
         if (
             stripped.startswith("enum_start ")
+            or stripped == "enum_start"
             or stripped.startswith("enum ")
             or stripped.startswith("create_movement_action ")
             or stripped in {"reset_map_events", "inc _num_npcs", "inc _num_warps", "inc _num_traps", "inc _num_signs"}
@@ -609,13 +829,9 @@ def convert(text: str) -> str:
             continue
 
         if constants:
-            stripped = re.sub(
-                r"\b[A-Z][A-Z0-9_]*\b",
-                lambda match: str(constants.get(match.group(0), match.group(0))),
-                stripped,
-            )
+            stripped = substitute_constants(stripped, constants)
 
-        macro = expand_macro(stripped, constants, counters)
+        macro = expand_macro(stripped, constants, counters, macros)
         if macro is not None:
             out.extend(macro)
             continue
@@ -625,19 +841,28 @@ def convert(text: str) -> str:
             section = stripped.split()[1].split(",", 1)[0]
             out.append(f".section {section},\"\",@")
             continue
+        if stripped.startswith((".if", ".else", ".endif", ".ifndef", ".purgem")):
+            continue
 
         match = LABEL_RE.match(stripped)
         if match:
             name, colons, rest = match.groups()
             close_label()
-            if colons == "::" or is_global_label:
+            global_label = colons == "::" or is_global_label
+            if global_label:
                 out.append(f".globl {name}")
+            out.append(f".type {name},@object")
             out.append(f"{name}:")
             open_label = name
+            open_label_sized = emit_sizes or global_label
             if rest:
                 out.append(rest)
             continue
 
+        if stripped.startswith(".4byte "):
+            symbol = stripped[len(".4byte "):].strip()
+            if symbol in script_command_functions:
+                out.append(f".functype {symbol} (i32) -> (i32)")
         out.append(stripped)
 
     close_label()
