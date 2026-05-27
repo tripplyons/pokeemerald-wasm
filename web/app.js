@@ -6,7 +6,10 @@ const VRAM = 0x06000000;
 const OAM = 0x07000000;
 const KEYINPUT = 0x04000130;
 const KEY_MASK = 0x03ff;
-const FRAMES_PER_TICK = Math.max(1, Number(new URLSearchParams(location.search).get('speed')) || 1);
+const speedParam = new URLSearchParams(location.search).get('speed');
+const UNBOUNDED_SPEED = speedParam === '0';
+const FRAMES_PER_TICK = UNBOUNDED_SPEED ? 1 : Math.max(1, Number(speedParam) || 1);
+const UNBOUNDED_FRAME_BUDGET_MS = 16;
 
 const buttons = {
   a: 1 << 0,
@@ -541,12 +544,13 @@ async function boot() {
   instance.exports.AgbMain();
   statusText = `running — ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MiB wasm`;
   statusEl.textContent = `${statusText} — 0 fps`;
-  setInterval(tick, 1000 / 60);
+  if (UNBOUNDED_SPEED) setTimeout(tick, 0);
+  else setInterval(tick, 1000 / 60);
 }
 
-function updateFps() {
+function updateFps(frameCount) {
   renderedFrames++;
-  emulatedFrames += FRAMES_PER_TICK;
+  emulatedFrames += frameCount;
 
   const now = performance.now();
   const elapsed = now - lastFpsUpdate;
@@ -554,7 +558,7 @@ function updateFps() {
 
   const fps = Math.round(renderedFrames * 1000 / elapsed);
   const gameFps = Math.round(emulatedFrames * 1000 / elapsed);
-  const suffix = FRAMES_PER_TICK === 1 ? `${fps} fps` : `${fps} fps / ${gameFps} game fps`;
+  const suffix = UNBOUNDED_SPEED || FRAMES_PER_TICK !== 1 ? `${fps} fps / ${gameFps} game fps` : `${fps} fps`;
   statusEl.textContent = `${statusText} — ${suffix}`;
   lastFpsUpdate = now;
   renderedFrames = 0;
@@ -571,11 +575,23 @@ function runFrames(frameCount, keyMask = 0) {
   u16[KEYINPUT >> 1] = KEY_MASK;
 }
 
+function runUnboundedFrames() {
+  const start = performance.now();
+  let frames = 0;
+  do {
+    runFrames(1);
+    frames++;
+  } while (performance.now() - start < UNBOUNDED_FRAME_BUDGET_MS);
+  return frames;
+}
+
 function tick() {
   try {
-    runFrames(FRAMES_PER_TICK);
+    const frames = UNBOUNDED_SPEED ? runUnboundedFrames() : FRAMES_PER_TICK;
+    if (!UNBOUNDED_SPEED) runFrames(frames);
     render();
-    updateFps();
+    updateFps(frames);
+    if (UNBOUNDED_SPEED) setTimeout(tick, 0);
   } catch (error) {
     console.error(error);
     statusEl.textContent = error.stack || String(error);
