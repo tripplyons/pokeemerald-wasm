@@ -790,8 +790,11 @@ function automationState() {
     objectY: readS16(objectEvent + 0x12),
     objectEventId,
     littlerootTownState: instance.exports.VarGet(0x4050),
+    birchLabState: instance.exports.VarGet(0x4084),
     littlerootRivalState: instance.exports.VarGet(0x408d),
     littlerootIntroState: instance.exports.VarGet(0x4092),
+    oldaleRivalState: instance.exports.VarGet(0x40c7),
+    starterMon: instance.exports.VarGet(0x4023),
   };
 }
 
