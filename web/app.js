@@ -702,6 +702,10 @@ speedInput.addEventListener('input', () => {
   resetFpsCounters();
 });
 
+function fpsStatus(displayFps, gameFps) {
+  return `${statusText} — Display FPS: ${displayFps}, Game FPS: ${gameFps} (${(gameFps / 60).toFixed(1)}x)`;
+}
+
 async function boot() {
   const bytes = await fetch('/build/wasm/pokeemerald.wasm', { cache: 'no-store' }).then((res) => res.arrayBuffer());
   const module = await WebAssembly.compile(bytes);
@@ -715,7 +719,7 @@ async function boot() {
   instance.exports.AgbMain();
   statusText = `running — ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MiB wasm`;
   setSpeedFromExponent(speedToExponent(initialSpeed()));
-  statusEl.textContent = `${statusText} — Display FPS: 0, Game FPS: 0`;
+  statusEl.textContent = fpsStatus(0, 0);
   if (automate) {
     render();
     resolveAutomationReady();
@@ -734,7 +738,7 @@ function updateFps(frameCount) {
 
   const fps = Math.round(renderedFrames * 1000 / elapsed);
   const gameFps = Math.round(emulatedFrames * 1000 / elapsed);
-  statusEl.textContent = `${statusText} — Display FPS: ${fps}, Game FPS: ${gameFps}`;
+  statusEl.textContent = fpsStatus(fps, gameFps);
   lastFpsUpdate = now;
   renderedFrames = 0;
   emulatedFrames = 0;
