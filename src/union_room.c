@@ -3293,6 +3293,9 @@ static bool32 HandleContactFromOtherPlayer(struct WirelessLink_URoom *uroom)
 
 void InitUnionRoom(void)
 {
+#if WASM
+    sUnionRoomPlayerName[0] = EOS;
+#else
     struct WirelessLink_URoom *data;
 
     sUnionRoomPlayerName[0] = EOS;
@@ -3305,6 +3308,7 @@ void InitUnionRoom(void)
     data->unknown = 0;
     data->unreadPlayerId = 0;
     sUnionRoomPlayerName[0] = EOS;
+#endif
 }
 
 static void Task_InitUnionRoom(u8 taskId)
