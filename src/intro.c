@@ -1150,17 +1150,14 @@ void CB2_InitCopyrightScreenAfterBootup(void)
     {
 #if WASM
         SetSaveBlocksPointers(0);
-        ResetMenuAndMonGlobals();
-        Save_ResetSaveCounters();
-        Sav2_ClearSetDefault();
 #else
         SetSaveBlocksPointers(GetSaveBlocksPointersBaseOffset());
+#endif
         ResetMenuAndMonGlobals();
         Save_ResetSaveCounters();
         LoadGameSave(SAVE_NORMAL);
         if (gSaveFileStatus == SAVE_STATUS_EMPTY || gSaveFileStatus == SAVE_STATUS_CORRUPT)
             Sav2_ClearSetDefault();
-#endif
         SetPokemonCryStereo(gSaveBlock2Ptr->optionsSound);
         InitHeap(gHeap, HEAP_SIZE);
     }
