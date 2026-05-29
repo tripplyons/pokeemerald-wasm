@@ -112,6 +112,9 @@ h1 {
 
 .status {
   min-height: 1.25em;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
   color: #9bf2cc;
   font-size: clamp(12px, 2.2vmin, 19px);
   font-weight: 400;
