@@ -173,6 +173,11 @@ function initialSpeed() {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
+function configureSpeedInput() {
+  speedInput.min = String(MIN_SPEED_EXPONENT);
+  speedInput.max = String(MAX_SPEED_EXPONENT);
+}
+
 function gbaColor(value) {
   const r = (value & 31) * 255 / 31;
   const g = ((value >> 5) & 31) * 255 / 31;
@@ -696,6 +701,8 @@ document.querySelectorAll('[data-key]').forEach((button) => {
   button.addEventListener('pointercancel', () => setPressed(name, false));
   button.addEventListener('pointerleave', () => setPressed(name, false));
 });
+
+configureSpeedInput();
 
 speedInput.addEventListener('input', () => {
   setSpeedFromExponent(speedInput.value);
