@@ -191,10 +191,11 @@ function safeName(name) {
 
 async function saveScreenshot(cdp, outputDir, event) {
   const dataUrl = await evaluate(cdp, `window.pokeemerald.automation.screenshot()`);
+  const state = await evaluate(cdp, `window.pokeemerald.automation.state()`);
   const png = Buffer.from(dataUrl.replace(/^data:image\/png;base64,/, ''), 'base64');
   const file = `${String(event.frame).padStart(6, '0')}-${safeName(event.name)}.png`;
   await writeFile(resolve(outputDir, 'screenshots', file), png);
-  return file;
+  return { file, state };
 }
 
 async function main() {
@@ -258,7 +259,13 @@ async function main() {
     if (cdp) cdp.close();
     if (browser && !options.keepBrowser) browser.child.kill();
     if (server) server.child.kill();
-    if (!options.keepBrowser) await rm(userDataDir, { recursive: true, force: true });
+    if (!options.keepBrowser) {
+      try {
+        await rm(userDataDir, { recursive: true, force: true });
+      } catch {
+        // Chrome can leave profile files behind briefly after shutdown.
+      }
+    }
   }
 }
 

@@ -693,12 +693,38 @@ function runToFrame(targetFrame) {
   return currentFrame;
 }
 
+function readU32(ptr) {
+  return u16[ptr >> 1] | (u16[(ptr + 2) >> 1] << 16);
+}
+
+function automationState() {
+  const saveBlock1 = readU32(instance.exports.gSaveBlock1Ptr.value);
+  const playerAvatar = instance.exports.gPlayerAvatar.value;
+  const objectEventId = u8[playerAvatar + 5];
+  const objectEvent = instance.exports.gObjectEvents.value + objectEventId * 0x24;
+  return {
+    frame: currentFrame,
+    x: readS16(saveBlock1),
+    y: readS16(saveBlock1 + 2),
+    mapGroup: u8[saveBlock1 + 4],
+    mapNum: u8[saveBlock1 + 5],
+    elevation: u8[objectEvent + 0x0b] & 0x0f,
+    objectX: readS16(objectEvent + 0x10),
+    objectY: readS16(objectEvent + 0x12),
+    objectEventId,
+    littlerootTownState: instance.exports.VarGet(0x4050),
+    littlerootRivalState: instance.exports.VarGet(0x408d),
+    littlerootIntroState: instance.exports.VarGet(0x4092),
+  };
+}
+
 function automationApi() {
   return {
     ready: automationReady,
     setButton: setAutomationButton,
     runToFrame,
     screenshot: () => canvas.toDataURL('image/png'),
+    state: automationState,
     frame: () => currentFrame,
   };
 }
