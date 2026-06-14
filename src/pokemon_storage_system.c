@@ -1988,6 +1988,10 @@ static void VBlankCB_PokeStorage(void)
 static void CB2_PokeStorage(void)
 {
     RunTasks();
+#if WASM
+    if (sStorage == NULL)
+        return;
+#endif
     DoScheduledBgTilemapCopiesToVram();
     ScrollBackground();
     UpdateCloseBoxButtonFlash();
