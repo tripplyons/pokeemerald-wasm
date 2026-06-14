@@ -8,6 +8,14 @@ const KEYINPUT = 0x04000130;
 const KEY_MASK = 0x03ff;
 const FLASH_BASE = 0x0e000000;
 const FLASH_SIZE = 128 * 1024;
+const FLASH_SECTOR_SIZE = 4096;
+const SAVE_SECTORS_PER_SLOT = 14;
+const SAVE_SECTOR_SIGNATURE = 0x08012025;
+const SAVE_SECTOR_DATA_SIZES = [
+  0x0f2c,
+  0x0f80, 0x0f80, 0x0f80, 0x0f08,
+  0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x07d0,
+];
 const SAVE_STORAGE_KEY = 'pokeemerald.wasm.flash.v1';
 const SAVE_FLUSH_INTERVAL_MS = 1000;
 const searchParams = new URLSearchParams(location.search);
@@ -65,6 +73,8 @@ let speed = 1;
 let currentFrame = 0;
 let lastSavedFlashHash = 0;
 let lastSaveFlushTime = performance.now();
+let wasmModulePromise;
+let bootId = 0;
 let automationReady;
 let resolveAutomationReady;
 if (automate) {
@@ -105,18 +115,22 @@ function hashBytes(bytes) {
   return hash >>> 0;
 }
 
-function loadFlashSave() {
+function loadFlashSave(sourceBytes) {
   const flash = flashBytes();
   flash.fill(0xFF);
 
-  try {
-    const stored = localStorage.getItem(SAVE_STORAGE_KEY);
-    if (stored) {
-      const saved = base64ToBytes(stored);
-      if (saved.length === FLASH_SIZE) flash.set(saved);
+  if (sourceBytes?.length === FLASH_SIZE) {
+    flash.set(sourceBytes);
+  } else {
+    try {
+      const stored = localStorage.getItem(SAVE_STORAGE_KEY);
+      if (stored) {
+        const saved = base64ToBytes(stored);
+        if (saved.length === FLASH_SIZE) flash.set(saved);
+      }
+    } catch {
+      // Storage may be disabled; the game can still run with volatile flash.
     }
-  } catch {
-    // Storage may be disabled; the game can still run with volatile flash.
   }
 
   lastSavedFlashHash = hashBytes(flash);
@@ -154,6 +168,65 @@ function downloadSave() {
   URL.revokeObjectURL(url);
 }
 
+function readSaveU16(bytes, offset) {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function readSaveU32(bytes, offset) {
+  return (bytes[offset]
+    | (bytes[offset + 1] << 8)
+    | (bytes[offset + 2] << 16)
+    | (bytes[offset + 3] << 24)) >>> 0;
+}
+
+function saveSectorChecksum(bytes, offset, size) {
+  let sum = 0;
+  let i = 0;
+  for (; i + 3 < size; i += 4) sum = (sum + readSaveU32(bytes, offset + i)) >>> 0;
+  for (; i < size; i++) sum = (sum + (bytes[offset + i] << ((i & 3) * 8))) >>> 0;
+  return ((sum >>> 16) + (sum & 0xffff)) & 0xffff;
+}
+
+function hasValidEmeraldSaveSlot(bytes, slot) {
+  let validSectorFlags = 0;
+  const firstSector = slot * SAVE_SECTORS_PER_SLOT;
+
+  for (let i = 0; i < SAVE_SECTORS_PER_SLOT; i++) {
+    const sectorOffset = (firstSector + i) * FLASH_SECTOR_SIZE;
+    const id = readSaveU16(bytes, sectorOffset + 0x0ff4);
+    const checksum = readSaveU16(bytes, sectorOffset + 0x0ff6);
+    const signature = readSaveU32(bytes, sectorOffset + 0x0ff8);
+    const dataSize = SAVE_SECTOR_DATA_SIZES[id];
+
+    if (signature === SAVE_SECTOR_SIGNATURE
+      && dataSize !== undefined
+      && checksum === saveSectorChecksum(bytes, sectorOffset, dataSize)) {
+      validSectorFlags |= 1 << id;
+    }
+  }
+
+  return validSectorFlags === (1 << SAVE_SECTORS_PER_SLOT) - 1;
+}
+
+function isValidEmeraldSave(bytes) {
+  return hasValidEmeraldSaveSlot(bytes, 0) || hasValidEmeraldSaveSlot(bytes, 1);
+}
+
+async function wasmModule() {
+  wasmModulePromise ??= fetch('/build/wasm/pokeemerald.wasm', { cache: 'no-store' })
+    .then((res) => res.arrayBuffer())
+    .then(async (bytes) => ({ bytes, module: await WebAssembly.compile(bytes) }));
+  return wasmModulePromise;
+}
+
+async function restartWithSave(bytes) {
+  statusText = 'restarting with uploaded save...';
+  statusEl.textContent = statusText;
+  pressed.clear();
+  pendingPresses.clear();
+  await boot(bytes);
+}
+
 async function uploadSave(file) {
   if (!file || !u8) return;
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -161,12 +234,14 @@ async function uploadSave(file) {
     statusEl.textContent = `expected a ${FLASH_SIZE} byte Emerald .sav file, got ${bytes.length} bytes`;
     return;
   }
+  if (!isValidEmeraldSave(bytes)) {
+    statusEl.textContent = 'save file does not contain a valid Emerald save slot';
+    return;
+  }
 
-  flashBytes().set(bytes);
   lastSavedFlashHash = hashBytes(bytes);
   localStorage.setItem(SAVE_STORAGE_KEY, bytesToBase64(bytes));
-  statusText = 'save uploaded; reload page to load it in-game';
-  statusEl.textContent = statusText;
+  await restartWithSave(bytes);
 }
 
 function clamp(value, min, max) {
@@ -762,17 +837,20 @@ function fpsStatus(displayFps, gameFps) {
   return `${statusText} — Display FPS: ${displayFps}, Game FPS: ${gameFps} (${(gameFps / 60).toFixed(1)}x)`;
 }
 
-async function boot() {
-  const bytes = await fetch('/build/wasm/pokeemerald.wasm', { cache: 'no-store' }).then((res) => res.arrayBuffer());
-  const module = await WebAssembly.compile(bytes);
+async function boot(saveBytes) {
+  const thisBootId = ++bootId;
+  const { bytes, module } = await wasmModule();
   instance = await WebAssembly.instantiate(module, importsFor(module));
   memory = instance.exports.memory;
   window.pokeemerald = { instance, memory, runFrames };
   if (automate) window.pokeemerald.automation = automationApi();
   refreshViews();
-  loadFlashSave();
+  loadFlashSave(saveBytes);
   writeKeys();
   instance.exports.AgbMain();
+  currentFrame = 0;
+  gameFrameAccumulator = 0;
+  resetFpsCounters();
   statusText = `running — ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MiB wasm`;
   setSpeedFromExponent(speedToExponent(initialSpeed()));
   statusEl.textContent = fpsStatus(0, 0);
@@ -780,7 +858,7 @@ async function boot() {
     render();
     resolveAutomationReady();
   } else {
-    requestAnimationFrame(tick);
+    requestAnimationFrame((now) => tick(thisBootId, now));
   }
 }
 
@@ -893,14 +971,15 @@ function runFramesForTick(elapsedMs) {
   return frames;
 }
 
-function tick(now) {
+function tick(thisBootId, now) {
+  if (thisBootId !== bootId) return;
   try {
     const elapsedMs = Math.min(now - lastTick, 100);
     lastTick = now;
     const frames = runFramesForTick(elapsedMs);
     render();
     updateFps(frames);
-    requestAnimationFrame(tick);
+    requestAnimationFrame((nextNow) => tick(thisBootId, nextNow));
   } catch (error) {
     console.error(error);
     statusEl.textContent = error.stack || String(error);
