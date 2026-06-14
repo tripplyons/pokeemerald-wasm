@@ -1556,6 +1556,10 @@ static void CopyObjectGraphicsInfoToSpriteTemplate(u16 graphicsId, void (*callba
 
 static void CopyObjectGraphicsInfoToSpriteTemplate_WithMovementType(u16 graphicsId, u16 movementType, struct SpriteTemplate *spriteTemplate, const struct SubspriteTable **subspriteTables)
 {
+#if WASM
+    if (movementType >= NUM_MOVEMENT_TYPES)
+        movementType = MOVEMENT_TYPE_NONE;
+#endif
     CopyObjectGraphicsInfoToSpriteTemplate(graphicsId, sMovementTypeCallbacks[movementType], spriteTemplate, subspriteTables);
 }
 
@@ -4635,6 +4639,10 @@ u8 GetDirectionToFace(s16 x, s16 y, s16 targetX, s16 targetY)
 
 void SetTrainerMovementType(struct ObjectEvent *objectEvent, u8 movementType)
 {
+#if WASM
+    if (movementType >= NUM_MOVEMENT_TYPES)
+        movementType = MOVEMENT_TYPE_NONE;
+#endif
     objectEvent->movementType = movementType;
     objectEvent->directionSequenceIndex = 0;
     objectEvent->playerCopyableMovement = 0;
