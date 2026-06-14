@@ -12,6 +12,11 @@ const FLASH_SECTOR_SIZE = 4096;
 const SAVE_SECTORS_PER_SLOT = 14;
 const SAVE_SECTOR_SIGNATURE = 0x08012025;
 const SAVE_SECTOR_DATA_SIZES = [
+  0x0f08,
+  0x0f80, 0x0f80, 0x0f80, 0x0dc0,
+  0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x07d0,
+];
+const VANILLA_SAVE_SECTOR_DATA_SIZES = [
   0x0f2c,
   0x0f80, 0x0f80, 0x0f80, 0x0f08,
   0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x07d0,
@@ -179,6 +184,11 @@ function readSaveU32(bytes, offset) {
     | (bytes[offset + 3] << 24)) >>> 0;
 }
 
+function writeSaveU16(bytes, offset, value) {
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >> 8) & 0xff;
+}
+
 function saveSectorChecksum(bytes, offset, size) {
   let sum = 0;
   let i = 0;
@@ -187,7 +197,7 @@ function saveSectorChecksum(bytes, offset, size) {
   return ((sum >>> 16) + (sum & 0xffff)) & 0xffff;
 }
 
-function hasValidEmeraldSaveSlot(bytes, slot) {
+function hasValidEmeraldSaveSlot(bytes, slot, sectorDataSizes) {
   let validSectorFlags = 0;
   const firstSector = slot * SAVE_SECTORS_PER_SLOT;
 
@@ -196,7 +206,7 @@ function hasValidEmeraldSaveSlot(bytes, slot) {
     const id = readSaveU16(bytes, sectorOffset + 0x0ff4);
     const checksum = readSaveU16(bytes, sectorOffset + 0x0ff6);
     const signature = readSaveU32(bytes, sectorOffset + 0x0ff8);
-    const dataSize = SAVE_SECTOR_DATA_SIZES[id];
+    const dataSize = sectorDataSizes[id];
 
     if (signature === SAVE_SECTOR_SIGNATURE
       && dataSize !== undefined
@@ -208,8 +218,23 @@ function hasValidEmeraldSaveSlot(bytes, slot) {
   return validSectorFlags === (1 << SAVE_SECTORS_PER_SLOT) - 1;
 }
 
-function isValidEmeraldSave(bytes) {
-  return hasValidEmeraldSaveSlot(bytes, 0) || hasValidEmeraldSaveSlot(bytes, 1);
+function isValidEmeraldSave(bytes, sectorDataSizes) {
+  return hasValidEmeraldSaveSlot(bytes, 0, sectorDataSizes)
+    || hasValidEmeraldSaveSlot(bytes, 1, sectorDataSizes);
+}
+
+function normalizeSaveForCurrentBuild(bytes) {
+  const normalized = new Uint8Array(bytes);
+  for (let sector = 0; sector < SAVE_SECTORS_PER_SLOT * 2; sector++) {
+    const sectorOffset = sector * FLASH_SECTOR_SIZE;
+    const id = readSaveU16(normalized, sectorOffset + 0x0ff4);
+    const dataSize = SAVE_SECTOR_DATA_SIZES[id];
+    if (readSaveU32(normalized, sectorOffset + 0x0ff8) === SAVE_SECTOR_SIGNATURE
+      && dataSize !== undefined) {
+      writeSaveU16(normalized, sectorOffset + 0x0ff6, saveSectorChecksum(normalized, sectorOffset, dataSize));
+    }
+  }
+  return normalized;
 }
 
 async function wasmModule() {
@@ -234,14 +259,16 @@ async function uploadSave(file) {
     statusEl.textContent = `expected a ${FLASH_SIZE} byte Emerald .sav file, got ${bytes.length} bytes`;
     return;
   }
-  if (!isValidEmeraldSave(bytes)) {
+  if (!isValidEmeraldSave(bytes, SAVE_SECTOR_DATA_SIZES)
+    && !isValidEmeraldSave(bytes, VANILLA_SAVE_SECTOR_DATA_SIZES)) {
     statusEl.textContent = 'save file does not contain a valid Emerald save slot';
     return;
   }
 
-  lastSavedFlashHash = hashBytes(bytes);
-  localStorage.setItem(SAVE_STORAGE_KEY, bytesToBase64(bytes));
-  await restartWithSave(bytes);
+  const normalized = normalizeSaveForCurrentBuild(bytes);
+  lastSavedFlashHash = hashBytes(normalized);
+  localStorage.setItem(SAVE_STORAGE_KEY, bytesToBase64(normalized));
+  await restartWithSave(normalized);
 }
 
 function clamp(value, min, max) {
