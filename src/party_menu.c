@@ -12,6 +12,7 @@
 #include "contest.h"
 #include "data.h"
 #include "decompress.h"
+#include "dma3.h"
 #include "easy_chat.h"
 #include "event_data.h"
 #include "evolution_scene.h"
@@ -739,6 +740,10 @@ static bool8 AllocPartyMenuBgGfx(void)
         sPartyMenuInternal->data[0]++;
         break;
     case 1:
+#if WASM
+        if (IsDma3ManagerBusyWithBgCopy())
+            ProcessDma3Requests();
+#endif
         if (!IsDma3ManagerBusyWithBgCopy())
         {
             LZDecompressWram(gPartyMenuBg_Tilemap, sPartyBgTilemapBuffer);
