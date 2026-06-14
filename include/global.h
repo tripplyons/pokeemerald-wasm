@@ -468,6 +468,9 @@ struct BattleFrontier
     /*0xEFA*/ u8 unused_EFA;
     /*0xEFB*/ u8 unused_EFB;
     /*0xEFC*/ struct DomeMonData domePlayerPartyData[FRONTIER_PARTY_SIZE];
+#if WASM
+    u8 wasmPadding[0x20];
+#endif
 };
 
 struct ApprenticeQuestion
@@ -549,6 +552,9 @@ struct SaveBlock2
     /*0x57C*/ struct RankingHall2P hallRecords2P[FRONTIER_LVL_MODE_COUNT][HALL_RECORDS_COUNT]; // From record mixing.
     /*0x624*/ u16 contestLinkResults[CONTEST_CATEGORIES_COUNT][CONTESTANT_COUNT];
     /*0x64C*/ struct BattleFrontier frontier;
+#if WASM
+    u8 wasmPadding[4];
+#endif
 }; // sizeof=0xF2C
 
 extern struct SaveBlock2 *gSaveBlock2Ptr;
@@ -612,6 +618,9 @@ struct Pokeblock
     u8 bitter;
     u8 sour;
     u8 feel;
+#if WASM
+    u8 wasmPadding;
+#endif
 };
 
 struct Roamer
@@ -742,6 +751,9 @@ struct LinkBattleRecords
 {
     struct LinkBattleRecord entries[LINK_B_RECORDS_COUNT];
     u8 languages[LINK_B_RECORDS_COUNT];
+#if WASM
+    u8 wasmPadding[2];
+#endif
     //u8 padding;
 };
 
@@ -778,6 +790,9 @@ struct Mail
     /*0x1A*/ u8 trainerId[TRAINER_ID_LENGTH];
     /*0x1E*/ u16 species;
     /*0x20*/ u16 itemId;
+#if WASM
+    u8 wasmPadding[2];
+#endif
 };
 
 struct DaycareMail

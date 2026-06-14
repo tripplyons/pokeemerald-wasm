@@ -72,6 +72,9 @@ struct BerryTree
     u8 watered2:1;
     u8 watered3:1;
     u8 watered4:1;
+#if WASM
+    u8 wasmPadding[2];
+#endif
 };
 
 #endif // GUARD_GLOBAL_BERRY_H
