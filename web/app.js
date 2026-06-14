@@ -43,6 +43,8 @@ const canvas = document.querySelector('#screen');
 const statusEl = document.querySelector('#status');
 const speedInput = document.querySelector('#speed');
 const speedValue = document.querySelector('#speed-value');
+const downloadSaveButton = document.querySelector('#download-save');
+const uploadSaveInput = document.querySelector('#upload-save');
 const ctx = canvas.getContext('2d');
 const image = ctx.createImageData(WIDTH, HEIGHT);
 const layerData = new Uint8Array(WIDTH * HEIGHT);
@@ -136,6 +138,35 @@ function saveFlashIfChanged(force = false) {
   } catch {
     // Keep running even if the browser refuses persistent storage.
   }
+}
+
+function downloadSave() {
+  if (!u8) return;
+  saveFlashIfChanged(true);
+  const blob = new Blob([new Uint8Array(flashBytes())], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'pokeemerald.sav';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function uploadSave(file) {
+  if (!file || !u8) return;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.length !== FLASH_SIZE) {
+    statusEl.textContent = `expected a ${FLASH_SIZE} byte Emerald .sav file, got ${bytes.length} bytes`;
+    return;
+  }
+
+  flashBytes().set(bytes);
+  lastSavedFlashHash = hashBytes(bytes);
+  localStorage.setItem(SAVE_STORAGE_KEY, bytesToBase64(bytes));
+  statusText = 'save uploaded; reload page to load it in-game';
+  statusEl.textContent = statusText;
 }
 
 function clamp(value, min, max) {
@@ -712,6 +743,19 @@ configureSpeedInput();
 speedInput.addEventListener('input', () => {
   setSpeedFromExponent(speedInput.value);
   resetFpsCounters();
+});
+
+downloadSaveButton.addEventListener('click', downloadSave);
+
+uploadSaveInput.addEventListener('change', async () => {
+  try {
+    await uploadSave(uploadSaveInput.files[0]);
+  } catch (error) {
+    console.error(error);
+    statusEl.textContent = error.stack || String(error);
+  } finally {
+    uploadSaveInput.value = '';
+  }
 });
 
 function fpsStatus(displayFps, gameFps) {

@@ -192,6 +192,49 @@ button.pressed {
   gap: clamp(5px, 1vmin, 10px);
 }
 
+.save-controls {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(8px, 1.5vmin, 14px);
+}
+
+.upload-save {
+  min-width: 0;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  min-height: clamp(38px, 8vmin, 68px);
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #20140b;
+  background: #9bf2cc;
+  font-size: clamp(13px, 2.2vmin, 18px);
+  font-weight: 950;
+  box-shadow:
+    0 clamp(5px, 1.1vmin, 10px) 0 #347d63,
+    0 clamp(9px, 2vmin, 18px) clamp(8px, 2vmin, 24px) #00000055;
+  cursor: pointer;
+}
+
+.upload-save:active {
+  transform: translateY(clamp(4px, .9vmin, 8px));
+  box-shadow:
+    0 clamp(1px, .35vmin, 3px) 0 #347d63,
+    0 clamp(4px, 1vmin, 10px) clamp(6px, 1.5vmin, 18px) #00000055;
+}
+
+#upload-save {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .speed-control label {
   display: flex;
   justify-content: space-between;
@@ -307,6 +350,10 @@ button.pressed {
 
   .speed-control {
     margin-top: 2px;
+  }
+
+  .save-controls {
+    gap: 10px;
   }
 
   .speed-control label {

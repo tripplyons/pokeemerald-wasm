@@ -52,6 +52,12 @@
         <label for="speed">Speed <output id="speed-value" for="speed">1x</output></label>
         <input id="speed" type="range" min="-1" max="3" step="0.01" value="0" />
       </div>
+
+      <div class="save-controls" aria-label="Save file controls">
+        <button id="download-save" type="button">Download .sav</button>
+        <label class="upload-save" for="upload-save">Upload .sav</label>
+        <input id="upload-save" type="file" accept=".sav,.srm,application/octet-stream" />
+      </div>
     </section>
 
     <p class="keys">Keyboard: arrows, Z=A, X=B, Enter=Start, Shift=Select.</p>
