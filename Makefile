@@ -77,6 +77,7 @@ MODERN_OBJ_DIR_NAME := $(BUILD_DIR)/modern
 WASM_BUILD_DIR := $(BUILD_DIR)/wasm
 WASM_OBJ_DIR := $(WASM_BUILD_DIR)/obj
 WASM := $(WASM_BUILD_DIR)/$(FILE_NAME).wasm
+WASM_SOUND_HEADER := $(WASM_BUILD_DIR)/wasm_sound.h
 ASSETS_DIR_NAME := $(BUILD_DIR)/assets
 
 ELF_NAME := $(ROM_NAME:.gba=.elf)
@@ -253,7 +254,13 @@ wasm: generated wasm-assets $(WASM)
 wasm-assets: $(GFX)
 	uv run python tools/generate_wasm_assets.py
 
+$(WASM_SOUND_HEADER): tools/generate_wasm_sound.py sound/song_table.inc sound/songs/midi/midi.cfg $(MID_SRCS)
+	@mkdir -p $(dir $@)
+	uv run python tools/generate_wasm_sound.py $@
+
 $(WASM_C_OBJS): | generated wasm-assets
+
+$(WASM_OBJ_DIR)/m4a.o: $(WASM_SOUND_HEADER)
 
 $(WASM): Makefile $(WASM_C_OBJS) $(WASM_DATA_OBJS)
 	@test -n "$(WASM_LD)" || { echo "wasm-ld not found; set WASM_LD=/path/to/wasm-ld"; exit 1; }
@@ -261,7 +268,7 @@ $(WASM): Makefile $(WASM_C_OBJS) $(WASM_DATA_OBJS)
 
 $(WASM_OBJ_DIR)/%.o: $(C_SUBDIR)/%.c
 	@mkdir -p $(dir $@)
-	$(WASM_CC) --target=wasm32-unknown-unknown -DMODERN=1 -DWASM=1 -I include/wasm -I include -iquote include -E $< | $(PREPROC) -i -g $(ASSETS_DIR_NAME) $< charmap.txt | $(WASM_CC) --target=wasm32-unknown-unknown -x c -O2 -Wno-incompatible-library-redeclaration -Wno-unknown-attributes -Wno-ignored-attributes -Wno-parentheses -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast -Wno-builtin-requires-header -Wno-gnu-alignof-expression -Wno-unknown-escape-sequence -Wno-excess-initializers -c - -o $@
+	$(WASM_CC) --target=wasm32-unknown-unknown -DMODERN=1 -DWASM=1 -I $(WASM_BUILD_DIR) -I include/wasm -I include -iquote include -E $< | $(PREPROC) -i -g $(ASSETS_DIR_NAME) $< charmap.txt | $(WASM_CC) --target=wasm32-unknown-unknown -x c -O2 -Wno-incompatible-library-redeclaration -Wno-unknown-attributes -Wno-ignored-attributes -Wno-parentheses -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast -Wno-builtin-requires-header -Wno-gnu-alignof-expression -Wno-unknown-escape-sequence -Wno-excess-initializers -c - -o $@
 
 $(WASM_OBJ_DIR)/%.o: $(DATA_ASM_SUBDIR)/%.s tools/wasm_asm_data.py | generated
 	@mkdir -p $(dir $@) $(WASM_BUILD_DIR)

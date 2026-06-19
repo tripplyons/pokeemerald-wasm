@@ -2,6 +2,10 @@
 #include "gba/m4a_internal.h"
 #include "constants/songs.h"
 
+#if WASM
+#include "wasm_sound.h"
+#endif
+
 extern const u8 gCgb3Vol[];
 
 #define BSS_CODE __attribute__((section(".bss.code")))
@@ -22,10 +26,70 @@ COMMON_DATA u8 gMPlayMemAccArea[0x10] = {0};
 COMMON_DATA struct MusicPlayerInfo gMPlayInfo_SE3 = {0};
 
 #if WASM
-static void WasmMPlayStart(struct MusicPlayerInfo *mplayInfo)
+static u16 sWasmMPlayFrames[4];
+static u16 sWasmMPlaySongs[4];
+
+static u8 WasmMPlayIndex(struct MusicPlayerInfo *mplayInfo)
 {
+    if (mplayInfo == &gMPlayInfo_BGM)
+        return WASM_MUSIC_PLAYER_BGM;
+    if (mplayInfo == &gMPlayInfo_SE1)
+        return WASM_MUSIC_PLAYER_SE1;
+    if (mplayInfo == &gMPlayInfo_SE2)
+        return WASM_MUSIC_PLAYER_SE2;
+    if (mplayInfo == &gMPlayInfo_SE3)
+        return WASM_MUSIC_PLAYER_SE3;
+    return 0xFF;
+}
+
+static struct MusicPlayerInfo *WasmMPlayInfoForPlayer(u8 player)
+{
+    switch (player)
+    {
+    case WASM_MUSIC_PLAYER_BGM:
+        return &gMPlayInfo_BGM;
+    case WASM_MUSIC_PLAYER_SE1:
+        return &gMPlayInfo_SE1;
+    case WASM_MUSIC_PLAYER_SE2:
+        return &gMPlayInfo_SE2;
+    case WASM_MUSIC_PLAYER_SE3:
+        return &gMPlayInfo_SE3;
+    }
+
+    return NULL;
+}
+
+static void WasmMPlayInit(struct MusicPlayerInfo *mplayInfo)
+{
+    u8 index;
+
     if (mplayInfo == NULL)
         return;
+
+    index = WasmMPlayIndex(mplayInfo);
+    if (index != 0xFF)
+    {
+        sWasmMPlayFrames[index] = 0;
+        sWasmMPlaySongs[index] = MUS_NONE;
+    }
+
+    mplayInfo->ident = ID_NUMBER;
+    mplayInfo->status = 0;
+}
+
+static void WasmMPlayStart(struct MusicPlayerInfo *mplayInfo, u16 frames, u16 songNum)
+{
+    u8 index;
+
+    if (mplayInfo == NULL)
+        return;
+
+    index = WasmMPlayIndex(mplayInfo);
+    if (index != 0xFF)
+    {
+        sWasmMPlayFrames[index] = frames;
+        sWasmMPlaySongs[index] = songNum;
+    }
 
     mplayInfo->ident = ID_NUMBER;
     mplayInfo->status = MUSICPLAYER_STATUS_TRACK;
@@ -33,33 +97,109 @@ static void WasmMPlayStart(struct MusicPlayerInfo *mplayInfo)
 
 static void WasmMPlayStop(struct MusicPlayerInfo *mplayInfo)
 {
+    u8 index;
+
     if (mplayInfo == NULL)
         return;
+
+    index = WasmMPlayIndex(mplayInfo);
+    if (index != 0xFF)
+    {
+        sWasmMPlayFrames[index] = 0;
+        sWasmMPlaySongs[index] = MUS_NONE;
+    }
 
     mplayInfo->ident = ID_NUMBER;
     mplayInfo->status = 0;
 }
 
-static bool8 WasmSongUsesBgmPlayer(u16 songNum)
+static void WasmMPlayContinue(struct MusicPlayerInfo *mplayInfo)
 {
-    return songNum == MUS_DUMMY || songNum >= MUS_LITTLEROOT_TEST;
+    if (mplayInfo != NULL && mplayInfo->ident == ID_NUMBER)
+        mplayInfo->status = MUSICPLAYER_STATUS_TRACK;
+}
+
+static void WasmMPlayPause(struct MusicPlayerInfo *mplayInfo)
+{
+    if (mplayInfo != NULL && mplayInfo->ident == ID_NUMBER && (mplayInfo->status & MUSICPLAYER_STATUS_TRACK))
+        mplayInfo->status |= MUSICPLAYER_STATUS_PAUSE;
+}
+
+static void WasmMPlayTick(struct MusicPlayerInfo *mplayInfo)
+{
+    u8 index = WasmMPlayIndex(mplayInfo);
+
+    if (index == 0xFF || sWasmMPlayFrames[index] == 0)
+        return;
+
+    sWasmMPlayFrames[index]--;
+    if (sWasmMPlayFrames[index] == 0)
+        WasmMPlayStop(mplayInfo);
+}
+
+static void WasmSongStart(u16 songNum)
+{
+    const struct WasmSongInfo *song;
+
+    if (songNum >= WASM_SONG_COUNT)
+        return;
+
+    song = &gWasmSongInfo[songNum];
+    WasmMPlayStart(WasmMPlayInfoForPlayer(song->player), song->duration, songNum);
+}
+
+static void WasmSongStop(u16 songNum)
+{
+    u8 player;
+    struct MusicPlayerInfo *mplayInfo;
+
+    if (songNum >= WASM_SONG_COUNT)
+        return;
+
+    player = gWasmSongInfo[songNum].player;
+    mplayInfo = WasmMPlayInfoForPlayer(player);
+    if (sWasmMPlaySongs[player] == songNum)
+        WasmMPlayStop(mplayInfo);
 }
 
 void m4aSoundVSync(void) {}
 void m4aSoundVSyncOn(void) {}
 void m4aSoundVSyncOff(void) {}
-void m4aSoundInit(void) { SoundInit(&gSoundInfo); }
-void m4aSoundMain(void) {}
+void m4aSoundInit(void)
+{
+    SoundInit(&gSoundInfo);
+    WasmMPlayInit(&gMPlayInfo_BGM);
+    WasmMPlayInit(&gMPlayInfo_SE1);
+    WasmMPlayInit(&gMPlayInfo_SE2);
+    WasmMPlayInit(&gMPlayInfo_SE3);
+}
+void m4aSoundMain(void)
+{
+    WasmMPlayTick(&gMPlayInfo_BGM);
+    WasmMPlayTick(&gMPlayInfo_SE1);
+    WasmMPlayTick(&gMPlayInfo_SE2);
+    WasmMPlayTick(&gMPlayInfo_SE3);
+}
 void m4aSoundMode(u32 mode) {}
-void m4aSongNumStart(u16 n) { if (WasmSongUsesBgmPlayer(n)) WasmMPlayStart(&gMPlayInfo_BGM); }
-void m4aSongNumStartOrChange(u16 n) { if (WasmSongUsesBgmPlayer(n)) WasmMPlayStart(&gMPlayInfo_BGM); }
-void m4aSongNumStop(u16 n) { if (WasmSongUsesBgmPlayer(n)) WasmMPlayStop(&gMPlayInfo_BGM); }
-void m4aMPlayAllStop(void) { WasmMPlayStop(&gMPlayInfo_BGM); }
-void m4aMPlayContinue(struct MusicPlayerInfo *mplayInfo) { WasmMPlayStart(mplayInfo); }
+void m4aSongNumStart(u16 n) { WasmSongStart(n); }
+void m4aSongNumStartOrChange(u16 n) { WasmSongStart(n); }
+void m4aSongNumStop(u16 n) { WasmSongStop(n); }
+void m4aMPlayAllStop(void)
+{
+    s32 i;
+
+    WasmMPlayStop(&gMPlayInfo_BGM);
+    WasmMPlayStop(&gMPlayInfo_SE1);
+    WasmMPlayStop(&gMPlayInfo_SE2);
+    WasmMPlayStop(&gMPlayInfo_SE3);
+    for (i = 0; i < MAX_POKEMON_CRIES; i++)
+        WasmMPlayStop(&gPokemonCryMusicPlayers[i]);
+}
+void m4aMPlayContinue(struct MusicPlayerInfo *mplayInfo) { WasmMPlayContinue(mplayInfo); }
 void m4aMPlayFadeOut(struct MusicPlayerInfo *mplayInfo, u16 speed) { WasmMPlayStop(mplayInfo); }
-void m4aMPlayFadeOutTemporarily(struct MusicPlayerInfo *mplayInfo, u16 speed) { WasmMPlayStop(mplayInfo); }
-void m4aMPlayFadeIn(struct MusicPlayerInfo *mplayInfo, u16 speed) { WasmMPlayStart(mplayInfo); }
-void m4aMPlayImmInit(struct MusicPlayerInfo *mplayInfo) { WasmMPlayStart(mplayInfo); }
+void m4aMPlayFadeOutTemporarily(struct MusicPlayerInfo *mplayInfo, u16 speed) { WasmMPlayPause(mplayInfo); }
+void m4aMPlayFadeIn(struct MusicPlayerInfo *mplayInfo, u16 speed) { WasmMPlayContinue(mplayInfo); }
+void m4aMPlayImmInit(struct MusicPlayerInfo *mplayInfo) {}
 void m4aMPlayStop(struct MusicPlayerInfo *mplayInfo) { WasmMPlayStop(mplayInfo); }
 void m4aMPlayTempoControl(struct MusicPlayerInfo *mplayInfo, u16 tempo) {}
 void m4aMPlayVolumeControl(struct MusicPlayerInfo *mplayInfo, u16 trackBits, u16 volume) {}
@@ -67,11 +207,19 @@ void m4aMPlayPitchControl(struct MusicPlayerInfo *mplayInfo, u16 trackBits, s16 
 void m4aMPlayPanpotControl(struct MusicPlayerInfo *mplayInfo, u16 trackBits, s8 pan) {}
 void m4aMPlayModDepthSet(struct MusicPlayerInfo *mplayInfo, u16 trackBits, u8 modDepth) {}
 void m4aMPlayLFOSpeedSet(struct MusicPlayerInfo *mplayInfo, u16 trackBits, u8 lfoSpeed) {}
-void MPlayContinue(struct MusicPlayerInfo *mplayInfo) { WasmMPlayStart(mplayInfo); }
+void MPlayContinue(struct MusicPlayerInfo *mplayInfo) { WasmMPlayContinue(mplayInfo); }
 void MPlayFadeOut(struct MusicPlayerInfo *mplayInfo, u16 speed) { WasmMPlayStop(mplayInfo); }
-void MPlayStart(struct MusicPlayerInfo *mplayInfo, struct SongHeader *songHeader) { WasmMPlayStart(mplayInfo); }
+void MPlayStart(struct MusicPlayerInfo *mplayInfo, struct SongHeader *songHeader) { WasmMPlayStart(mplayInfo, 0, MUS_NONE); }
 void MPlayMain(struct MusicPlayerInfo *mplayInfo) {}
-void MPlayOpen(struct MusicPlayerInfo *mplayInfo, struct MusicPlayerTrack *tracks, u8 trackCount) { WasmMPlayStart(mplayInfo); }
+void MPlayOpen(struct MusicPlayerInfo *mplayInfo, struct MusicPlayerTrack *tracks, u8 trackCount)
+{
+    WasmMPlayInit(mplayInfo);
+    if (mplayInfo != NULL)
+    {
+        mplayInfo->tracks = tracks;
+        mplayInfo->trackCount = trackCount;
+    }
+}
 void MPlayExtender(struct CgbChannel *cgbChans) {}
 void MPlayJumpTableCopy(MPlayFunc *mplayJumpTable) {}
 void SoundInit(struct SoundInfo *soundInfo) { if (soundInfo != NULL) soundInfo->ident = ID_NUMBER; }

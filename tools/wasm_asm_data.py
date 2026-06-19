@@ -158,6 +158,34 @@ def load_map_constants() -> Dict[str, int]:
     return constants
 
 
+def load_tm_hm_constants(constants: Dict[str, int]) -> Dict[str, int]:
+    out = {}
+    if "ITEM_TM01" not in constants or "ITEM_HM01" not in constants:
+        return out
+
+    groups = {"TM": [], "HM": []}
+    current = None
+    entry_re = re.compile(r"\bF\(([^)]+)\)")
+
+    for raw in (ROOT / "include/constants/tms_hms.h").read_text().splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("#define FOREACH_TM("):
+            current = "TM"
+        elif stripped.startswith("#define FOREACH_HM("):
+            current = "HM"
+        elif stripped.startswith("#define "):
+            current = None
+
+        if current is not None:
+            groups[current].extend(entry_re.findall(stripped))
+
+    for index, name in enumerate(groups["TM"]):
+        out[f"ITEM_TM_{name}"] = constants["ITEM_TM01"] + index
+    for index, name in enumerate(groups["HM"]):
+        out[f"ITEM_HM_{name}"] = constants["ITEM_HM01"] + index
+    return out
+
+
 def strip_c_comments(text: str) -> str:
     return re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
 
@@ -166,6 +194,16 @@ def normalize_c_int_expr(expr: str) -> str:
     expr = expr.split("//", 1)[0].strip()
     expr = re.sub(r"\b(0x[0-9A-Fa-f]+|\d+)[uUlL]+\b", r"\1", expr)
     expr = re.sub(r"\([^()]*\b(?:u8|s8|u16|s16|u32|s32|bool|bool8|bool32)\s*\)", "", expr)
+    expr = re.sub(
+        r"\bRGB\(\s*([^,()]+)\s*,\s*([^,()]+)\s*,\s*([^,()]+)\s*\)",
+        r"((\1) | ((\2) << 5) | ((\3) << 10))",
+        expr,
+    )
+    expr = re.sub(
+        r"\b_RGB\(\s*([^,()]+)\s*,\s*([^,()]+)\s*,\s*([^,()]+)\s*\)",
+        r"((((\3) & 0x1F) << 10) + (((\2) & 0x1F) << 5) + ((\1) & 0x1F))",
+        expr,
+    )
     return expr
 
 
@@ -1110,6 +1148,7 @@ def convert(text: str, source: Optional[Path] = None, emit_sizes: bool = True) -
     constants.update(load_movement_constants())
     constants.update(load_map_constants())
     constants.update(load_source_constants(source))
+    constants.update(load_tm_hm_constants(constants))
     constants.update({
         "OBJ_KIND_NORMAL": 0,
         "OBJ_KIND_CLONE": 1,
@@ -1126,6 +1165,9 @@ def convert(text: str, source: Optional[Path] = None, emit_sizes: bool = True) -
         "LOCALID_PLAYER": 255,
         "LOCALID_NONE": 0,
         "MOVEMENT_ACTION_STEP_END": 0xFE,
+        "STR_VAR_1": 0,
+        "STR_VAR_2": 1,
+        "STR_VAR_3": 2,
     })
     counters = {"npcs": 0, "warps": 0, "traps": 0, "signs": 0}
     open_label = None
