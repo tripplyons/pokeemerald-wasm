@@ -436,6 +436,65 @@ def substitute_constants(line: str, constants: Dict[str, int]) -> str:
     )
 
 
+def substitute_expr_defines(line: str, defines: Dict[str, str]) -> str:
+    for name, expr in sorted(defines.items(), key=lambda item: len(item[0]), reverse=True):
+        line = re.sub(rf"\b{re.escape(name)}\b", expr, line)
+    return line
+
+
+def load_source_expr_defines(source: Optional[Path], constants: Dict[str, int]) -> Dict[str, str]:
+    if source is None:
+        return {}
+
+    expr_defines: Dict[str, str] = {}
+    seen = set()
+
+    def resolve_include(include: str) -> Path:
+        root_path = ROOT / include
+        if root_path.exists():
+            return root_path
+        return ROOT / "include" / include
+
+    def read_header(path: Path) -> None:
+        path = path if path.is_absolute() else ROOT / path
+        path = path.resolve()
+        if path in seen or not path.exists():
+            return
+        seen.add(path)
+
+        text = strip_c_comments(path.read_text(errors="ignore"))
+        for raw in text.splitlines():
+            line = raw.strip()
+            include_match = CPP_INCLUDE_RE.match(line)
+            if include_match:
+                read_header(resolve_include(include_match.group(1)))
+                continue
+
+            match = DEFINE_RE.match(line)
+            if not match:
+                continue
+            name, expr = match.groups()
+            if "(" in name or expr is None:
+                continue
+
+            expr = normalize_c_int_expr(expr)
+            expr = substitute_expr_defines(expr, expr_defines)
+            expr = substitute_constants(expr, constants)
+            if eval_asm_expr(expr, constants) is not None:
+                continue
+            if not re.search(r"\b[A-Za-z_]\w*\b", expr):
+                continue
+            if not re.fullmatch(r"[A-Za-z0-9_\s()+\-*/%<>&|~]+", expr):
+                continue
+            expr_defines[name] = expr
+
+    for raw in source.read_text(errors="ignore").splitlines():
+        match = CPP_INCLUDE_RE.match(raw)
+        if match:
+            read_header(resolve_include(match.group(1)))
+    return expr_defines
+
+
 def eval_asm_expr(expr: str, constants: Dict[str, int]) -> Optional[int]:
     expr = substitute_constants(expr.strip(), constants)
     if not re.fullmatch(r"[0-9xXa-fA-F\s()+\-*/%<>&|~]+", expr):
@@ -446,20 +505,21 @@ def eval_asm_expr(expr: str, constants: Dict[str, int]) -> Optional[int]:
         return None
 
 
-def format_asm_expr(expr: str, constants: Dict[str, int]) -> str:
+def format_asm_expr(expr: str, constants: Dict[str, int], expr_defines: Optional[Dict[str, str]] = None) -> str:
+    expr = substitute_expr_defines(expr, expr_defines or {})
     value = eval_asm_expr(expr, constants)
     if value is not None:
         return str(value)
     return substitute_constants(expr, constants)
 
 
-def normalize_data_directive(line: str, constants: Dict[str, int]) -> str:
+def normalize_data_directive(line: str, constants: Dict[str, int], expr_defines: Optional[Dict[str, str]] = None) -> str:
     if line.startswith((".byte ", ".2byte ", ".4byte ")):
         directive, operands_text = line.split(" ", 1)
         operands = split_args(operands_text)
-        return f"{directive} " + ", ".join(format_asm_expr(operand, constants) for operand in operands)
+        return f"{directive} " + ", ".join(format_asm_expr(operand, constants, expr_defines) for operand in operands)
     if line.startswith(".space "):
-        return substitute_constants(line, constants)
+        return substitute_expr_defines(substitute_constants(line, constants), expr_defines or {})
     return line
 
 
@@ -478,6 +538,7 @@ def expand_event_macro(
     args: List[str],
     macros: Dict[str, AsmMacro],
     constants: Dict[str, int],
+    expr_defines: Optional[Dict[str, str]] = None,
     counters: Optional[Dict[str, int]] = None,
     depth: int = 0,
 ) -> Optional[List[str]]:
@@ -558,6 +619,7 @@ def expand_event_macro(
         for param, value in sorted(values.items(), key=lambda item: len(item[0]), reverse=True):
             expanded = expanded.replace(f"\\{param}", value)
         expanded = re.sub(r"\\@", str(counters.setdefault("macro_local_id", 0)), expanded)
+        expanded = substitute_expr_defines(expanded, expr_defines or {})
 
         if LABEL_RE.match(expanded):
             if local_label_args:
@@ -573,7 +635,7 @@ def expand_event_macro(
             local_label_args = operands
             if not operands:
                 continue
-            out.append(".2byte " + ", ".join(format_asm_expr(operand, constants) for operand in operands))
+            out.append(".2byte " + ", ".join(format_asm_expr(operand, constants, expr_defines) for operand in operands))
             continue
 
         if expanded.startswith((".byte ", ".4byte ")):
@@ -584,11 +646,11 @@ def expand_event_macro(
                 for operand in operands:
                     if operand in function_symbols:
                         out.append(f".functype {operand} (i32) -> ()")
-            out.append(f"{directive} " + ", ".join(format_asm_expr(operand, constants) for operand in operands))
+            out.append(f"{directive} " + ", ".join(format_asm_expr(operand, constants, expr_defines) for operand in operands))
             continue
 
         if expanded.startswith(".space "):
-            out.append(substitute_constants(expanded, constants))
+            out.append(substitute_expr_defines(substitute_constants(expanded, constants), expr_defines or {}))
             continue
 
         nested_name, _, nested_args = expanded.partition(" ")
@@ -611,7 +673,7 @@ def expand_event_macro(
                     out.extend([f".byte {warp_args[1]}", f".2byte {warp_args[2]}", f".2byte {warp_args[3]}"])
                 continue
 
-        nested = expand_macro(expanded, constants, counters if counters is not None else {}, macros, depth + 1)
+        nested = expand_macro(expanded, constants, counters if counters is not None else {}, macros, expr_defines, depth + 1)
         if nested is None:
             return None
         out.extend(nested)
@@ -619,7 +681,14 @@ def expand_event_macro(
     return out
 
 
-def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, int], macros: Dict[str, AsmMacro], macro_depth: int = 0) -> Optional[List[str]]:
+def expand_macro(
+    stripped: str,
+    constants: Dict[str, int],
+    counters: Dict[str, int],
+    macros: Dict[str, AsmMacro],
+    expr_defines: Optional[Dict[str, str]] = None,
+    macro_depth: int = 0,
+) -> Optional[List[str]]:
     def is_var_id(value: str) -> bool:
         try:
             parsed = parse_int(value, constants)
@@ -669,7 +738,7 @@ def expand_macro(stripped: str, constants: Dict[str, int], counters: Dict[str, i
 
     def expand_loaded_macro() -> Optional[List[str]]:
         name, _, args = stripped.partition(" ")
-        return expand_event_macro(name, parse_macro_args(name, args, macros), macros, constants, counters, macro_depth)
+        return expand_event_macro(name, parse_macro_args(name, args, macros), macros, constants, expr_defines, counters, macro_depth)
 
     macro_name = stripped.split(" ", 1)[0]
     # Native macro definitions own command names that collide across script engines.
@@ -1169,6 +1238,7 @@ def convert(text: str, source: Optional[Path] = None, emit_sizes: bool = True) -
         "STR_VAR_2": 1,
         "STR_VAR_3": 2,
     })
+    expr_defines = load_source_expr_defines(source, constants)
     counters = {"npcs": 0, "warps": 0, "traps": 0, "signs": 0}
     open_label = None
     open_label_sized = False
@@ -1247,10 +1317,12 @@ def convert(text: str, source: Optional[Path] = None, emit_sizes: bool = True) -
 
         if constants:
             stripped = substitute_constants(stripped, constants)
+        if expr_defines:
+            stripped = substitute_expr_defines(stripped, expr_defines)
 
-        macro = expand_macro(stripped, constants, counters, macros)
+        macro = expand_macro(stripped, constants, counters, macros, expr_defines)
         if macro is not None:
-            out.extend(normalize_data_directive(line, constants) for line in macro)
+            out.extend(normalize_data_directive(line, constants, expr_defines) for line in macro)
             continue
 
         if stripped.startswith(".section"):
