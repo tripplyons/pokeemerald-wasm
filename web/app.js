@@ -843,7 +843,7 @@ function stepPendingPresses() {
 function setPressed(name, isPressed) {
   if (isPressed) {
     pressed.add(name);
-    pendingPresses.set(name, 12);
+    pendingPresses.set(name, 1);
   } else {
     pressed.delete(name);
   }
