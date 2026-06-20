@@ -692,13 +692,13 @@ function writeS32(ptr, value) {
 }
 
 function affineTerms(xScale, yScale, rotation) {
-  const angle = rotation * Math.PI * 2 / 256;
+  const angle = rotation * Math.PI * 2 / 0x10000;
   const sin = Math.sin(angle) * 256;
   const cos = Math.cos(angle) * 256;
   return {
     pa: cos * xScale / 256,
-    pb: -sin * yScale / 256,
-    pc: sin * xScale / 256,
+    pb: -sin * xScale / 256,
+    pc: sin * yScale / 256,
     pd: cos * yScale / 256,
   };
 }
