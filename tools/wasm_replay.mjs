@@ -12,6 +12,7 @@ const defaultOutputDir = 'wasm-replay-output';
 function usage() {
   console.error('usage: node tools/wasm_replay.mjs <events.txt> [output-dir] [--no-build] [--keep-browser]');
   console.error('event frame numbers are emulated game frames, not display frames');
+  console.error('events: screenshot [name], button <name> <on|off>, probe hblank-dma-win0h');
   process.exit(2);
 }
 
@@ -44,8 +45,16 @@ function parseEvents(text) {
       continue;
     }
 
+    if (fields[1] === 'probe') {
+      if (fields.length !== 3 || fields[2] !== 'hblank-dma-win0h') {
+        throw new Error(`${index + 1}: expected "<frame> probe hblank-dma-win0h"`);
+      }
+      events.push({ frame, type: 'probe', name: fields[2] });
+      continue;
+    }
+
     if (fields[1] !== 'button' || fields.length !== 4) {
-      throw new Error(`${index + 1}: expected "<frame> button <name> <on|off>" or "<frame> screenshot [name]"`);
+      throw new Error(`${index + 1}: expected "<frame> button <name> <on|off>", "<frame> screenshot [name]", or "<frame> probe hblank-dma-win0h"`);
     }
     const name = fields[2];
     const state = fields[3];
@@ -203,6 +212,26 @@ async function saveScreenshot(cdp, outputDir, event) {
   return { file, state };
 }
 
+async function runProbe(cdp, event) {
+  const result = await evaluate(cdp, `window.pokeemerald.automation.hblankDmaWin0HProbe()`);
+  const stoppedControls = { fixed: 0x0040, reload: 0x0060 };
+  for (const mode of ['fixed', 'reload']) {
+    const actual = result[mode];
+    if (actual?.activeLine0 !== 0
+        || actual.activeLine1 !== 63
+        || actual.activeLine2 !== 0
+        || actual.activeCached !== true
+        || actual.stoppedControl !== stoppedControls[mode]
+        || actual.stoppedLine0 !== 0
+        || actual.stoppedLine1 !== 0
+        || actual.stoppedLine2 !== 0
+        || actual.stoppedCached !== false) {
+      throw new Error(`unexpected ${event.name} ${mode} probe result: ${JSON.stringify(result)}`);
+    }
+  }
+  return { frame: event.frame, name: event.name, result };
+}
+
 async function main() {
   const { inputPath, outputDir, options } = parseArgs(process.argv.slice(2));
   await rm(outputDir, { recursive: true, force: true });
@@ -246,15 +275,18 @@ async function main() {
     })`, true);
 
     const screenshots = [];
+    const probes = [];
     for (const event of events) {
       await evaluate(cdp, `window.pokeemerald.automation.runToFrame(${event.frame})`);
       if (event.type === 'button') {
         await evaluate(cdp, `window.pokeemerald.automation.setButton(${JSON.stringify(event.name)}, ${event.pressed})`);
-      } else {
+      } else if (event.type === 'screenshot') {
         screenshots.push(await saveScreenshot(cdp, outputDir, event));
+      } else if (event.type === 'probe') {
+        probes.push(await runProbe(cdp, event));
       }
     }
-    await writeFile(resolve(outputDir, 'summary.json'), JSON.stringify({ input: basename(inputPath), frameUnit: 'emulated_game_frame', screenshots, errors }, null, 2));
+    await writeFile(resolve(outputDir, 'summary.json'), JSON.stringify({ input: basename(inputPath), frameUnit: 'emulated_game_frame', screenshots, probes, errors }, null, 2));
   } catch (error) {
     errors.push(error.stack || String(error));
     process.exitCode = 1;

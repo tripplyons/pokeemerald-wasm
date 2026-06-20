@@ -78,6 +78,7 @@ static void InitMainCallbacks(void);
 static void CallCallbacks(void);
 #if WASM
 void WasmRunFrame(void);
+void WasmDmaStop0(void);
 #endif
 #ifdef BUGFIX
 static void SeedRngWithRtc(void);
@@ -142,6 +143,13 @@ void AgbMain(void)
         WasmRunFrame();
 #endif
 }
+
+#if WASM
+void WasmDmaStop0(void)
+{
+    DmaStop(0);
+}
+#endif
 
 void WasmRunFrame(void)
 {

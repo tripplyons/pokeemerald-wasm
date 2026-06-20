@@ -9,6 +9,28 @@ const KEY_MASK = 0x03ff;
 const FLASH_BASE = 0x0e000000;
 const FLASH_SIZE = 128 * 1024;
 const FLASH_SECTOR_SIZE = 4096;
+const REG_OFFSET_BG0HOFS = 0x10;
+const REG_OFFSET_WIN0H = 0x40;
+const REG_OFFSET_WIN1H = 0x42;
+const REG_OFFSET_WIN0V = 0x44;
+const REG_OFFSET_WIN1V = 0x46;
+const REG_OFFSET_WININ = 0x48;
+const REG_OFFSET_WINOUT = 0x4a;
+const REG_OFFSET_BLDY = 0x54;
+const REG_OFFSET_DMA0 = 0xb0;
+const DMA_REG_SIZE = 12;
+const DMA_DEST_MASK = 0x0060;
+const DMA_DEST_FIXED = 0x0040;
+const DMA_DEST_RELOAD = 0x0060;
+const DMA_SRC_MASK = 0x0180;
+const DMA_SRC_DEC = 0x0080;
+const DMA_SRC_FIXED = 0x0100;
+const DMA_REPEAT = 0x0200;
+const DMA_32BIT = 0x0400;
+const DMA_DREQ_ON = 0x0800;
+const DMA_START_HBLANK = 0x2000;
+const DMA_START_MASK = 0x3000;
+const DMA_ENABLE = 0x8000;
 const SAVE_SECTORS_PER_SLOT = 14;
 const SAVE_SECTOR_SIGNATURE = 0x08012025;
 const SAVE_SECTOR_DATA_SIZES = [
@@ -77,6 +99,7 @@ let wasmModulePromise;
 let bootId = 0;
 let automationReady;
 let resolveAutomationReady;
+let hblankDmaGpuRegs = [];
 if (automate) {
   automationReady = new Promise((resolve) => { resolveAutomationReady = resolve; });
 }
@@ -303,27 +326,67 @@ function inWindowRange(value, range) {
   return start <= end ? value >= start && value < end : value >= start || value < end;
 }
 
+function refreshHblankDmaGpuRegs() {
+  hblankDmaGpuRegs = [];
+
+  for (let channel = 0; channel < 4; channel++) {
+    const dma = REG + REG_OFFSET_DMA0 + channel * DMA_REG_SIZE;
+    const control = u16[(dma + 10) >> 1];
+    if (!(control & DMA_ENABLE)
+        || !(control & DMA_REPEAT)
+        || (control & DMA_START_MASK) !== DMA_START_HBLANK
+        || (control & DMA_32BIT)
+        || u16[(dma + 8) >> 1] !== 1) {
+      continue;
+    }
+
+    const destMode = control & DMA_DEST_MASK;
+    if (destMode !== DMA_DEST_FIXED && destMode !== DMA_DEST_RELOAD) continue;
+
+    const dest = readU32(dma + 4);
+    const offset = dest - REG;
+    if (offset < 0 || offset >= REG_OFFSET_DMA0 || offset & 1) continue;
+    if (hblankDmaGpuRegs[offset >> 1]) continue;
+
+    const srcMode = control & DMA_SRC_MASK;
+    hblankDmaGpuRegs[offset >> 1] = {
+      src: readU32(dma),
+      stride: srcMode === DMA_SRC_FIXED ? 0 : srcMode === DMA_SRC_DEC ? -2 : 2,
+    };
+  }
+}
+
+function scanlineGpuReg(offset, y) {
+  const dma = hblankDmaGpuRegs[offset >> 1];
+  if (dma && y > 0) {
+    // HBlank DMA writes after scanline 0, so line 0 uses the VBlank-prepared register value.
+    const ptr = dma.src + dma.stride * (y - 1);
+    if (ptr >= 0 && ptr + 1 < u8.length) return u8[ptr] | (u8[ptr + 1] << 8);
+  }
+  return u16[(REG + offset) >> 1];
+}
+
 function windowMask(x, y) {
   const dispcnt = u16[REG >> 1];
   const windowsEnabled = dispcnt & 0xe000;
   if (!windowsEnabled) return 0x3f;
 
   if ((dispcnt & 0x2000)
-      && inWindowRange(x, u16[(REG + 0x40) >> 1])
-      && inWindowRange(y, u16[(REG + 0x44) >> 1])) {
-    return u16[(REG + 0x48) >> 1] & 0x3f;
+      && inWindowRange(x, scanlineGpuReg(REG_OFFSET_WIN0H, y))
+      && inWindowRange(y, u16[(REG + REG_OFFSET_WIN0V) >> 1])) {
+    return u16[(REG + REG_OFFSET_WININ) >> 1] & 0x3f;
   }
 
   if ((dispcnt & 0x4000)
-      && inWindowRange(x, u16[(REG + 0x42) >> 1])
-      && inWindowRange(y, u16[(REG + 0x46) >> 1])) {
-    return (u16[(REG + 0x48) >> 1] >> 8) & 0x3f;
+      && inWindowRange(x, scanlineGpuReg(REG_OFFSET_WIN1H, y))
+      && inWindowRange(y, u16[(REG + REG_OFFSET_WIN1V) >> 1])) {
+    return (u16[(REG + REG_OFFSET_WININ) >> 1] >> 8) & 0x3f;
   }
 
-  return u16[(REG + 0x4a) >> 1] & 0x3f;
+  return u16[(REG + REG_OFFSET_WINOUT) >> 1] & 0x3f;
 }
 
-function activeBlendColor(color, layer, pixel, effectsEnabled) {
+function activeBlendColor(color, layer, pixel, effectsEnabled, y) {
   const bldcnt = u16[(REG + 0x50) >> 1];
   const effect = (bldcnt >> 6) & 3;
   const sourceTargets = bldcnt & 0x3f;
@@ -340,7 +403,7 @@ function activeBlendColor(color, layer, pixel, effectsEnabled) {
     ];
   }
 
-  const evy = Math.min(u16[(REG + 0x54) >> 1] & 0x1f, 16);
+  const evy = Math.min(scanlineGpuReg(REG_OFFSET_BLDY, y) & 0x1f, 16);
   if (effect === 2) {
     return color.map((component) => component + (((255 - component) * evy) >> 4));
   }
@@ -356,7 +419,7 @@ function putPixel(x, y, color, layer = 0x20) {
   if (!(mask & layer)) return;
 
   const pixel = y * WIDTH + x;
-  const output = activeBlendColor(color, layer, pixel, mask & 0x20);
+  const output = activeBlendColor(color, layer, pixel, mask & 0x20, y);
   const p = pixel * 4;
   image.data[p] = output[0];
   image.data[p + 1] = output[1];
@@ -420,8 +483,9 @@ function textBgPixel(bg, x, y) {
   const size = (cnt >> 14) & 3;
   const width = size & 1 ? 512 : 256;
   const height = size & 2 ? 512 : 256;
-  const hofs = u16[(REG + 0x10 + bg * 4) >> 1] & 511;
-  const vofs = u16[(REG + 0x12 + bg * 4) >> 1] & 511;
+  const hofsOffset = REG_OFFSET_BG0HOFS + bg * 4;
+  const hofs = scanlineGpuReg(hofsOffset, y) & 511;
+  const vofs = scanlineGpuReg(hofsOffset + 2, y) & 511;
   const sx = (x + hofs) & (width - 1);
   const sy = (y + vofs) & (height - 1);
   const block = (sx >= 256 ? 1 : 0) + (sy >= 256 ? (size === 3 ? 2 : 1) : 0);
@@ -610,6 +674,7 @@ function renderTiled(dispcnt) {
 }
 
 function render() {
+  refreshHblankDmaGpuRegs();
   const dispcnt = u16[REG >> 1];
   const mode = dispcnt & 7;
   if (mode === 3) renderBitmapMode3();
@@ -910,7 +975,88 @@ function runToFrame(targetFrame) {
 }
 
 function readU32(ptr) {
-  return u16[ptr >> 1] | (u16[(ptr + 2) >> 1] << 16);
+  return (u16[ptr >> 1] | (u16[(ptr + 2) >> 1] << 16)) >>> 0;
+}
+
+function hblankDmaWin0HProbe() {
+  const src = 0x0203ff00;
+  const dma = REG + REG_OFFSET_DMA0;
+  const callDmaStop0 = () => {
+    if (typeof instance.exports.WasmDmaStop0 !== 'function') throw new Error('WasmDmaStop0 export unavailable');
+    instance.exports.WasmDmaStop0();
+  };
+  const probeMode = (destMode) => {
+    writeS32(dma, src);
+    writeS32(dma + 4, REG + REG_OFFSET_WIN0H);
+    writeS32(dma + 8, 1 | ((DMA_ENABLE | DMA_START_HBLANK | DMA_REPEAT | destMode) << 16));
+
+    refreshHblankDmaGpuRegs();
+    const activeLine0 = windowMask(5, 0);
+    const activeLine1 = windowMask(5, 1);
+    const activeLine2 = windowMask(5, 2);
+    const activeCached = Boolean(hblankDmaGpuRegs[REG_OFFSET_WIN0H >> 1]);
+
+    callDmaStop0();
+    const stoppedControl = u16[(dma + 10) >> 1];
+    refreshHblankDmaGpuRegs();
+    const stoppedLine0 = windowMask(5, 0);
+    const stoppedLine1 = windowMask(5, 1);
+    const stoppedLine2 = windowMask(5, 2);
+
+    return {
+      activeLine0,
+      activeLine1,
+      activeLine2,
+      activeCached,
+      stoppedControl,
+      stoppedLine0,
+      stoppedLine1,
+      stoppedLine2,
+      stoppedCached: Boolean(hblankDmaGpuRegs[REG_OFFSET_WIN0H >> 1]),
+    };
+  };
+  const saved = {
+    dispcnt: u16[REG >> 1],
+    win0h: u16[(REG + REG_OFFSET_WIN0H) >> 1],
+    win0v: u16[(REG + REG_OFFSET_WIN0V) >> 1],
+    winin: u16[(REG + REG_OFFSET_WININ) >> 1],
+    winout: u16[(REG + REG_OFFSET_WINOUT) >> 1],
+    src0: u16[src >> 1],
+    src1: u16[(src + 2) >> 1],
+    dmaSrc: readU32(dma),
+    dmaDest: readU32(dma + 4),
+    dmaControl: readU32(dma + 8),
+  };
+  let result;
+
+  try {
+    u16[REG >> 1] = 0x2000;
+    u16[(REG + REG_OFFSET_WIN0H) >> 1] = (20 << 8) | 30;
+    u16[(REG + REG_OFFSET_WIN0V) >> 1] = HEIGHT;
+    u16[(REG + REG_OFFSET_WININ) >> 1] = 0x3f;
+    u16[(REG + REG_OFFSET_WINOUT) >> 1] = 0;
+    u16[src >> 1] = 10;
+    u16[(src + 2) >> 1] = (20 << 8) | 30;
+
+    result = {
+      fixed: probeMode(DMA_DEST_FIXED),
+      reload: probeMode(DMA_DEST_RELOAD),
+    };
+  } finally {
+    u16[REG >> 1] = saved.dispcnt;
+    u16[(REG + REG_OFFSET_WIN0H) >> 1] = saved.win0h;
+    u16[(REG + REG_OFFSET_WIN0V) >> 1] = saved.win0v;
+    u16[(REG + REG_OFFSET_WININ) >> 1] = saved.winin;
+    u16[(REG + REG_OFFSET_WINOUT) >> 1] = saved.winout;
+    u16[src >> 1] = saved.src0;
+    u16[(src + 2) >> 1] = saved.src1;
+    writeS32(dma, saved.dmaSrc);
+    writeS32(dma + 4, saved.dmaDest);
+    writeS32(dma + 8, saved.dmaControl);
+    refreshHblankDmaGpuRegs();
+  }
+
+  return result;
 }
 
 function automationState() {
@@ -943,6 +1089,7 @@ function automationApi() {
     setButton: setAutomationButton,
     runToFrame,
     screenshot: () => canvas.toDataURL('image/png'),
+    hblankDmaWin0HProbe,
     state: automationState,
     frame: () => currentFrame,
   };

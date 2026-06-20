@@ -276,7 +276,6 @@ static inline void WasmDmaFill32(u32 value, void *dest, u32 size)
 #undef DmaClear32
 #undef DmaCopy16
 #undef DmaCopy32
-#undef DmaStop
 
 #define DmaFill16(dmaNum, value, dest, size) WasmDmaFill16(value, (void *)(dest), size)
 #define DmaFill32(dmaNum, value, dest, size) WasmDmaFill32(value, (void *)(dest), size)
@@ -284,7 +283,6 @@ static inline void WasmDmaFill32(u32 value, void *dest, u32 size)
 #define DmaClear32(dmaNum, dest, size) WasmDmaFill32(0, (void *)(dest), size)
 #define DmaCopy16(dmaNum, src, dest, size) __builtin_memcpy((void *)(dest), src, size)
 #define DmaCopy32(dmaNum, src, dest, size) __builtin_memcpy((void *)(dest), src, size)
-#define DmaStop(dmaNum)
 #endif
 
 #define IntrEnable(flags)                                       \
