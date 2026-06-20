@@ -495,6 +495,11 @@ def load_source_expr_defines(source: Optional[Path], constants: Dict[str, int]) 
     return expr_defines
 
 
+def format_map_bytes(map_id: str, constants: Dict[str, int]) -> List[str]:
+    map_value = parse_int(map_id, constants)
+    return [f".byte {map_value >> 8}", f".byte {map_value & 0xFF}"]
+
+
 def eval_asm_expr(expr: str, constants: Dict[str, int]) -> Optional[int]:
     expr = substitute_constants(expr.strip(), constants)
     if not re.fullmatch(r"[0-9xXa-fA-F\s()+\-*/%<>&|~]+", expr):
@@ -655,14 +660,12 @@ def expand_event_macro(
 
         nested_name, _, nested_args = expanded.partition(" ")
         if nested_name == "map":
-            map_value = parse_int(nested_args.strip(), constants)
-            out.extend([f".byte {map_value >> 8}", f".byte {map_value & 0xFF}"])
+            out.extend(format_map_bytes(nested_args.strip(), constants))
             continue
         if nested_name == "formatwarp":
             warp_args = split_args(nested_args)
             if warp_args:
-                map_value = parse_int(warp_args[0], constants)
-                out.extend([f".byte {map_value >> 8}", f".byte {map_value & 0xFF}"])
+                out.extend(format_map_bytes(warp_args[0], constants))
                 if len(warp_args) == 1:
                     out.extend([f".byte {parse_int('WARP_ID_NONE', constants)}", ".2byte -1", ".2byte -1"])
                 elif len(warp_args) == 2:
@@ -1009,20 +1012,48 @@ def expand_macro(
         return [f".byte {parse_int('SCR_OP_DELAY', constants)}", f".2byte {value}"]
 
     if stripped.startswith("applymovement "):
-        local_id, movements = split_args(stripped[len("applymovement "):])[:2]
+        args = split_args(stripped[len("applymovement "):])
+        local_id, movements = args[:2]
+        if len(args) > 2 and args[2]:
+            return [
+                f".byte {parse_int('SCR_OP_APPLYMOVEMENTAT', constants)}",
+                f".2byte {local_id}",
+                f".4byte {movements}",
+                *format_map_bytes(args[2], constants),
+            ]
         return [f".byte {parse_int('SCR_OP_APPLYMOVEMENT', constants)}", f".2byte {local_id}", f".4byte {movements}"]
 
     if stripped.startswith("waitmovement"):
         args = split_args(stripped[len("waitmovement"):].strip())
         local_id = args[0] if args and args[0] else "0"
+        if len(args) > 1 and args[1]:
+            return [
+                f".byte {parse_int('SCR_OP_WAITMOVEMENTAT', constants)}",
+                f".2byte {local_id}",
+                *format_map_bytes(args[1], constants),
+            ]
         return [f".byte {parse_int('SCR_OP_WAITMOVEMENT', constants)}", f".2byte {local_id}"]
 
     if stripped.startswith("addobject "):
-        local_id = split_args(stripped[len("addobject "):])[0]
+        args = split_args(stripped[len("addobject "):])
+        local_id = args[0]
+        if len(args) > 1 and args[1]:
+            return [
+                f".byte {parse_int('SCR_OP_ADDOBJECTAT', constants)}",
+                f".2byte {local_id}",
+                *format_map_bytes(args[1], constants),
+            ]
         return [f".byte {parse_int('SCR_OP_ADDOBJECT', constants)}", f".2byte {local_id}"]
 
     if stripped.startswith("removeobject "):
-        local_id = split_args(stripped[len("removeobject "):])[0]
+        args = split_args(stripped[len("removeobject "):])
+        local_id = args[0]
+        if len(args) > 1 and args[1]:
+            return [
+                f".byte {parse_int('SCR_OP_REMOVEOBJECTAT', constants)}",
+                f".2byte {local_id}",
+                *format_map_bytes(args[1], constants),
+            ]
         return [f".byte {parse_int('SCR_OP_REMOVEOBJECT', constants)}", f".2byte {local_id}"]
 
     if stripped.startswith("setobjectxyperm "):
@@ -1055,8 +1086,7 @@ def expand_macro(
 
     if stripped.startswith("hideobjectat "):
         local_id, map_id = split_args(stripped[len("hideobjectat "):])
-        map_value = parse_int(map_id, constants)
-        return [f".byte {parse_int('SCR_OP_HIDEOBJECTAT', constants)}", f".2byte {local_id}", f".byte {map_value >> 8}", f".byte {map_value & 0xFF}"]
+        return [f".byte {parse_int('SCR_OP_HIDEOBJECTAT', constants)}", f".2byte {local_id}", *format_map_bytes(map_id, constants)]
 
     if stripped in constants:
         return [f".byte {parse_int(stripped, constants)}"]
