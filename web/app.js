@@ -35,7 +35,22 @@ const SAVE_SECTORS_PER_SLOT = 14;
 const SAVE_SECTOR_SIGNATURE = 0x08012025;
 const SAVE_SECTOR_DATA_SIZES = [
   0x0f2c,
+  0x0f80, 0x0f80, 0x0f80, 0x0f0c,
+  0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x07d0,
+];
+const VANILLA_SAVE_SECTOR_DATA_SIZES = [
+  0x0f2c,
   0x0f80, 0x0f80, 0x0f80, 0x0f08,
+  0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x07d0,
+];
+const LEGACY_WASM_SAVE_SECTOR_DATA_SIZES = [
+  0x0f08,
+  0x0f80, 0x0f80, 0x0f80, 0x0dc4,
+  0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x07d0,
+];
+const LEGACY_WASM_FRONTEND_SAVE_SECTOR_DATA_SIZES = [
+  0x0f08,
+  0x0f80, 0x0f80, 0x0f80, 0x0dc0,
   0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x07d0,
 ];
 const SAVE_STORAGE_KEY = 'pokeemerald.wasm.flash.v1';
@@ -143,13 +158,17 @@ function loadFlashSave(sourceBytes) {
   flash.fill(0xFF);
 
   if (sourceBytes?.length === FLASH_SIZE) {
-    flash.set(sourceBytes);
+    flash.set(normalizeSaveForCurrentBuild(sourceBytes) ?? sourceBytes);
   } else {
     try {
       const stored = localStorage.getItem(SAVE_STORAGE_KEY);
       if (stored) {
         const saved = base64ToBytes(stored);
-        if (saved.length === FLASH_SIZE) flash.set(saved);
+        if (saved.length === FLASH_SIZE) {
+          const normalized = normalizeSaveForCurrentBuild(saved);
+          flash.set(normalized ?? saved);
+          if (normalized && normalized !== saved) localStorage.setItem(SAVE_STORAGE_KEY, bytesToBase64(normalized));
+        }
       }
     } catch {
       // Storage may be disabled; the game can still run with volatile flash.
@@ -202,6 +221,11 @@ function readSaveU32(bytes, offset) {
     | (bytes[offset + 3] << 24)) >>> 0;
 }
 
+function writeSaveU16(bytes, offset, value) {
+  bytes[offset] = value & 0xff;
+  bytes[offset + 1] = (value >> 8) & 0xff;
+}
+
 function saveSectorChecksum(bytes, offset, size) {
   let sum = 0;
   let i = 0;
@@ -236,6 +260,148 @@ function isValidEmeraldSave(bytes, sectorDataSizes) {
     || hasValidEmeraldSaveSlot(bytes, 1, sectorDataSizes);
 }
 
+function isValidCurrentBuildSave(bytes) {
+  return isValidEmeraldSave(bytes, SAVE_SECTOR_DATA_SIZES)
+    || isValidEmeraldSave(bytes, VANILLA_SAVE_SECTOR_DATA_SIZES);
+}
+
+function copyRange(dst, dstOffset, src, srcOffset, size) {
+  dst.set(src.subarray(srcOffset, srcOffset + size), dstOffset);
+}
+
+function copyLegacyArray(dst, dstOffset, dstElementSize, src, srcOffset, srcElementSize, count) {
+  for (let i = 0; i < count; i++) {
+    copyRange(dst, dstOffset + i * dstElementSize, src, srcOffset + i * srcElementSize, srcElementSize);
+  }
+}
+
+function readSlotSaveBlocks(bytes, slot, sectorDataSizes) {
+  const saveBlock2 = new Uint8Array(0x0f08);
+  const saveBlock1 = new Uint8Array(0x3c44);
+  const firstSector = slot * SAVE_SECTORS_PER_SLOT;
+
+  for (let i = 0; i < SAVE_SECTORS_PER_SLOT; i++) {
+    const sectorOffset = (firstSector + i) * FLASH_SECTOR_SIZE;
+    const id = readSaveU16(bytes, sectorOffset + 0x0ff4);
+    const size = sectorDataSizes[id];
+    if (size === undefined) continue;
+
+    if (id === 0) {
+      copyRange(saveBlock2, 0, bytes, sectorOffset, Math.min(size, saveBlock2.length));
+    } else if (id >= 1 && id <= 4) {
+      copyRange(saveBlock1, (id - 1) * 0x0f80, bytes, sectorOffset, Math.min(size, saveBlock1.length - (id - 1) * 0x0f80));
+    }
+  }
+
+  return { saveBlock1, saveBlock2 };
+}
+
+function saveKeyScore(saveBlock1, key) {
+  let score = (readSaveU32(saveBlock1, 0x490) ^ key) <= 999999 ? 20 : -20;
+  const pockets = [
+    [0x560, 30, 99],
+    [0x5d8, 30, 99],
+    [0x650, 16, 99],
+    [0x690, 64, 99],
+    [0x790, 46, 999],
+  ];
+
+  for (const [offset, count, maxQuantity] of pockets) {
+    for (let i = 0; i < count; i++) {
+      const itemOffset = offset + i * 4;
+      const itemId = readSaveU16(saveBlock1, itemOffset);
+      const quantity = (readSaveU16(saveBlock1, itemOffset + 2) ^ key) & 0xffff;
+      if (itemId === 0) score += quantity === 0 ? 1 : -1;
+      else if (itemId < 377 && quantity > 0 && quantity <= maxQuantity) score += 3;
+      else score -= 3;
+    }
+  }
+
+  return score;
+}
+
+function isLikelyLegacyWasmSaveBlock(blocks) {
+  const legacyKey = readSaveU32(blocks.saveBlock2, 0x0a8);
+  const currentKey = readSaveU32(blocks.saveBlock2, 0x0ac);
+  if (legacyKey === currentKey) return false;
+  return saveKeyScore(blocks.saveBlock1, legacyKey) > saveKeyScore(blocks.saveBlock1, currentKey) + 20;
+}
+
+function migrateLegacySaveBlock2(src) {
+  const dst = new Uint8Array(0x0f2c);
+  copyRange(dst, 0, src, 0, 0x98);
+  copyRange(dst, 0x98, src, 0x98, 5);
+  copyRange(dst, 0xa0, src, 0x9e, 5);
+  copyRange(dst, 0xa8, src, 0xa4, 0xe64);
+  return dst;
+}
+
+function migrateLegacySaveBlock1(src) {
+  const dst = new Uint8Array(0x3d8c);
+  copyRange(dst, 0, src, 0, 0x848);
+  copyLegacyArray(dst, 0x848, 8, src, 0x848, 7, 40);
+  copyRange(dst, 0x988, src, 0x960, 0x166c - 0x960);
+  copyLegacyArray(dst, 0x169c, 8, src, 0x1674, 6, 128);
+  copyRange(dst, 0x1a9c, src, 0x1974, 0x2be0 - 0x1974);
+  copyLegacyArray(dst, 0x2be0, 36, src, 0x2ab8, 34, 16);
+  copyRange(dst, 0x2e20, src, 0x2cd8, 0x3150 - 0x2cd8);
+  copyRange(dst, 0x3150, src, 0x3008, 85);
+  copyRange(dst, 0x31a8, src, 0x305e, 11);
+  copyRange(dst, 0x31b4, src, 0x306c, 20);
+  copyRange(dst, 0x31c8, src, 0x3080, 21);
+  copyRange(dst, 0x31e0, src, 0x3098, 0x3c44 - 0x3098);
+  return dst;
+}
+
+function writeMigratedSaveSlot(out, source, slot, blocks) {
+  const currentBlocks = {
+    saveBlock2: migrateLegacySaveBlock2(blocks.saveBlock2),
+    saveBlock1: migrateLegacySaveBlock1(blocks.saveBlock1),
+  };
+  const firstSector = slot * SAVE_SECTORS_PER_SLOT;
+
+  for (let i = 0; i < SAVE_SECTORS_PER_SLOT; i++) {
+    const sectorOffset = (firstSector + i) * FLASH_SECTOR_SIZE;
+    const id = readSaveU16(source, sectorOffset + 0x0ff4);
+    const size = SAVE_SECTOR_DATA_SIZES[id];
+    if (size === undefined) continue;
+
+    out.fill(0, sectorOffset, sectorOffset + 0x0ff4);
+    if (id === 0) {
+      copyRange(out, sectorOffset, currentBlocks.saveBlock2, 0, size);
+    } else if (id >= 1 && id <= 4) {
+      copyRange(out, sectorOffset, currentBlocks.saveBlock1, (id - 1) * 0x0f80, size);
+    } else {
+      copyRange(out, sectorOffset, source, sectorOffset, size);
+    }
+    writeSaveU16(out, sectorOffset + 0x0ff6, saveSectorChecksum(out, sectorOffset, size));
+  }
+}
+
+function migrateLegacyWasmSave(bytes) {
+  const out = new Uint8Array(bytes);
+  let didMigrate = false;
+
+  for (let slot = 0; slot < 2; slot++) {
+    for (const legacySizes of [LEGACY_WASM_SAVE_SECTOR_DATA_SIZES, LEGACY_WASM_FRONTEND_SAVE_SECTOR_DATA_SIZES]) {
+      if (!hasValidEmeraldSaveSlot(bytes, slot, legacySizes)) continue;
+      const blocks = readSlotSaveBlocks(bytes, slot, legacySizes);
+      if (!isLikelyLegacyWasmSaveBlock(blocks)) continue;
+      writeMigratedSaveSlot(out, bytes, slot, blocks);
+      didMigrate = true;
+      break;
+    }
+  }
+
+  return didMigrate ? out : null;
+}
+
+function normalizeSaveForCurrentBuild(bytes) {
+  const migrated = migrateLegacyWasmSave(bytes);
+  if (migrated) return migrated;
+  return isValidCurrentBuildSave(bytes) ? bytes : null;
+}
+
 async function wasmModule() {
   wasmModulePromise ??= fetch('/build/wasm/pokeemerald.wasm', { cache: 'no-store' })
     .then((res) => res.arrayBuffer())
@@ -258,14 +424,15 @@ async function uploadSave(file) {
     statusEl.textContent = `expected a ${FLASH_SIZE} byte Emerald .sav file, got ${bytes.length} bytes`;
     return;
   }
-  if (!isValidEmeraldSave(bytes, SAVE_SECTOR_DATA_SIZES)) {
+  const normalized = normalizeSaveForCurrentBuild(bytes);
+  if (!normalized) {
     statusEl.textContent = 'save file does not contain a valid Emerald save slot';
     return;
   }
 
-  lastSavedFlashHash = hashBytes(bytes);
-  localStorage.setItem(SAVE_STORAGE_KEY, bytesToBase64(bytes));
-  await restartWithSave(bytes);
+  lastSavedFlashHash = hashBytes(normalized);
+  localStorage.setItem(SAVE_STORAGE_KEY, bytesToBase64(normalized));
+  await restartWithSave(normalized);
 }
 
 function clamp(value, min, max) {
