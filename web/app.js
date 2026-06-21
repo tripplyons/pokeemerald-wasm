@@ -583,7 +583,8 @@ function activeBlendColor(color, layer, pixel, effectsEnabled, y) {
 function putPixel(x, y, color, layer = 0x20) {
   if (x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT) return;
   const mask = windowMask(x, y);
-  if (!(mask & layer)) return;
+  // Window bit 5 enables color effects; it does not hide the backdrop.
+  if (layer !== 0x20 && !(mask & layer)) return;
 
   const pixel = y * WIDTH + x;
   const output = activeBlendColor(color, layer, pixel, mask & 0x20, y);
