@@ -53,6 +53,19 @@ const LEGACY_WASM_FRONTEND_SAVE_SECTOR_DATA_SIZES = [
   0x0f80, 0x0f80, 0x0f80, 0x0dc0,
   0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x0f80, 0x07d0,
 ];
+const SAVE_BLOCK2_SIZE = 0x0f2c;
+const SAVE_BLOCK1_SIZE = 0x3d8c;
+const LEGACY_SAVE_BLOCK2_SIZE = 0x0f08;
+const LEGACY_SAVE_BLOCK1_SIZE = 0x3c44;
+const SAVE_BLOCK2_ENCRYPTION_KEY_OFFSET = 0x0ac;
+const SAVE_BLOCK1_COINS_OFFSET = 0x494;
+const SAVE_BAG_POCKETS = [
+  [0x560, 30, 99],
+  [0x5d8, 30, 99],
+  [0x650, 16, 99],
+  [0x690, 64, 99],
+  [0x790, 46, 999],
+];
 const SAVE_STORAGE_KEY = 'pokeemerald.wasm.flash.v1';
 const SAVE_FLUSH_INTERVAL_MS = 1000;
 const searchParams = new URLSearchParams(location.search);
@@ -275,9 +288,9 @@ function copyLegacyArray(dst, dstOffset, dstElementSize, src, srcOffset, srcElem
   }
 }
 
-function readSlotSaveBlocks(bytes, slot, sectorDataSizes) {
-  const saveBlock2 = new Uint8Array(0x0f08);
-  const saveBlock1 = new Uint8Array(0x3c44);
+function readSlotSaveBlocks(bytes, slot, sectorDataSizes, saveBlock2Size, saveBlock1Size) {
+  const saveBlock2 = new Uint8Array(saveBlock2Size);
+  const saveBlock1 = new Uint8Array(saveBlock1Size);
   const firstSector = slot * SAVE_SECTORS_PER_SLOT;
 
   for (let i = 0; i < SAVE_SECTORS_PER_SLOT; i++) {
@@ -298,15 +311,8 @@ function readSlotSaveBlocks(bytes, slot, sectorDataSizes) {
 
 function saveKeyScore(saveBlock1, key) {
   let score = (readSaveU32(saveBlock1, 0x490) ^ key) <= 999999 ? 20 : -20;
-  const pockets = [
-    [0x560, 30, 99],
-    [0x5d8, 30, 99],
-    [0x650, 16, 99],
-    [0x690, 64, 99],
-    [0x790, 46, 999],
-  ];
 
-  for (const [offset, count, maxQuantity] of pockets) {
+  for (const [offset, count, maxQuantity] of SAVE_BAG_POCKETS) {
     for (let i = 0; i < count; i++) {
       const itemOffset = offset + i * 4;
       const itemId = readSaveU16(saveBlock1, itemOffset);
@@ -322,9 +328,100 @@ function saveKeyScore(saveBlock1, key) {
 
 function isLikelyLegacyWasmSaveBlock(blocks) {
   const legacyKey = readSaveU32(blocks.saveBlock2, 0x0a8);
-  const currentKey = readSaveU32(blocks.saveBlock2, 0x0ac);
+  const currentKey = readSaveU32(blocks.saveBlock2, SAVE_BLOCK2_ENCRYPTION_KEY_OFFSET);
   if (legacyKey === currentKey) return false;
   return saveKeyScore(blocks.saveBlock1, legacyKey) > saveKeyScore(blocks.saveBlock1, currentKey) + 20;
+}
+
+function isPlausibleBagQuantity(itemId, quantity, maxQuantity) {
+  if (itemId === 0) return quantity === 0;
+  return itemId < 377 && quantity > 0 && quantity <= maxQuantity;
+}
+
+function bagQuantityKeyScore(saveBlock1, key) {
+  let score = 0;
+  const keyLow = key & 0xffff;
+
+  for (const [offset, count, maxQuantity] of SAVE_BAG_POCKETS) {
+    for (let i = 0; i < count; i++) {
+      const itemOffset = offset + i * 4;
+      const itemId = readSaveU16(saveBlock1, itemOffset);
+      const quantity = (readSaveU16(saveBlock1, itemOffset + 2) ^ keyLow) & 0xffff;
+      if (isPlausibleBagQuantity(itemId, quantity, maxQuantity)) score += itemId === 0 ? 2 : 5;
+      else score += itemId === 0 ? -2 : -5;
+    }
+  }
+
+  return score;
+}
+
+function staleBagQuantityKey(saveBlock1, currentKey) {
+  const currentKeyLow = currentKey & 0xffff;
+  const candidates = new Set();
+
+  for (const [offset, count] of SAVE_BAG_POCKETS) {
+    for (let i = 0; i < count; i++) {
+      const itemOffset = offset + i * 4;
+      if (readSaveU16(saveBlock1, itemOffset) === 0) {
+        const rawQuantity = readSaveU16(saveBlock1, itemOffset + 2);
+        if (rawQuantity !== currentKeyLow) candidates.add(rawQuantity);
+      }
+    }
+  }
+
+  const currentScore = bagQuantityKeyScore(saveBlock1, currentKeyLow);
+  let bestKey = currentKeyLow;
+  let bestScore = currentScore;
+  for (const candidate of candidates) {
+    const score = bagQuantityKeyScore(saveBlock1, candidate);
+    if (score > bestScore) {
+      bestKey = candidate;
+      bestScore = score;
+    }
+  }
+
+  return bestKey !== currentKeyLow && bestScore > currentScore + 100 && bestScore > 100 ? bestKey : null;
+}
+
+function reencryptSaveBlock1Hword(saveBlock1, offset, oldKey, newKey) {
+  const value = (readSaveU16(saveBlock1, offset) ^ oldKey) & 0xffff;
+  writeSaveU16(saveBlock1, offset, value ^ newKey);
+}
+
+function repairStaleBagEncryption(blocks) {
+  const currentKey = readSaveU32(blocks.saveBlock2, SAVE_BLOCK2_ENCRYPTION_KEY_OFFSET);
+  const currentKeyLow = currentKey & 0xffff;
+  const oldKey = staleBagQuantityKey(blocks.saveBlock1, currentKey);
+  if (oldKey === null) return null;
+
+  const saveBlock1 = new Uint8Array(blocks.saveBlock1);
+  let didRepair = false;
+  for (const [offset, count, maxQuantity] of SAVE_BAG_POCKETS) {
+    for (let i = 0; i < count; i++) {
+      const quantityOffset = offset + i * 4 + 2;
+      const itemId = readSaveU16(saveBlock1, quantityOffset - 2);
+      const rawQuantity = readSaveU16(saveBlock1, quantityOffset);
+      const currentQuantity = (rawQuantity ^ currentKeyLow) & 0xffff;
+      const oldQuantity = (rawQuantity ^ oldKey) & 0xffff;
+      if (isPlausibleBagQuantity(itemId, currentQuantity, maxQuantity)
+          || !isPlausibleBagQuantity(itemId, oldQuantity, maxQuantity)) {
+        continue;
+      }
+
+      reencryptSaveBlock1Hword(saveBlock1, quantityOffset, oldKey, currentKeyLow);
+      didRepair = true;
+    }
+  }
+
+  const rawCoins = readSaveU16(saveBlock1, SAVE_BLOCK1_COINS_OFFSET);
+  const currentCoins = (rawCoins ^ currentKeyLow) & 0xffff;
+  const oldCoins = (rawCoins ^ oldKey) & 0xffff;
+  if (oldCoins <= 9999 && (currentCoins > 9999 || rawCoins === oldKey)) {
+    writeSaveU16(saveBlock1, SAVE_BLOCK1_COINS_OFFSET, oldCoins ^ currentKeyLow);
+    didRepair = true;
+  }
+
+  return didRepair ? { saveBlock1, saveBlock2: blocks.saveBlock2 } : null;
 }
 
 function migrateLegacySaveBlock2(src) {
@@ -353,11 +450,7 @@ function migrateLegacySaveBlock1(src) {
   return dst;
 }
 
-function writeMigratedSaveSlot(out, source, slot, blocks) {
-  const currentBlocks = {
-    saveBlock2: migrateLegacySaveBlock2(blocks.saveBlock2),
-    saveBlock1: migrateLegacySaveBlock1(blocks.saveBlock1),
-  };
+function writeCurrentSaveSlot(out, source, slot, currentBlocks) {
   const firstSector = slot * SAVE_SECTORS_PER_SLOT;
 
   for (let i = 0; i < SAVE_SECTORS_PER_SLOT; i++) {
@@ -378,6 +471,13 @@ function writeMigratedSaveSlot(out, source, slot, blocks) {
   }
 }
 
+function writeMigratedSaveSlot(out, source, slot, blocks) {
+  writeCurrentSaveSlot(out, source, slot, {
+    saveBlock2: migrateLegacySaveBlock2(blocks.saveBlock2),
+    saveBlock1: migrateLegacySaveBlock1(blocks.saveBlock1),
+  });
+}
+
 function migrateLegacyWasmSave(bytes) {
   const out = new Uint8Array(bytes);
   let didMigrate = false;
@@ -385,7 +485,7 @@ function migrateLegacyWasmSave(bytes) {
   for (let slot = 0; slot < 2; slot++) {
     for (const legacySizes of [LEGACY_WASM_SAVE_SECTOR_DATA_SIZES, LEGACY_WASM_FRONTEND_SAVE_SECTOR_DATA_SIZES]) {
       if (!hasValidEmeraldSaveSlot(bytes, slot, legacySizes)) continue;
-      const blocks = readSlotSaveBlocks(bytes, slot, legacySizes);
+      const blocks = readSlotSaveBlocks(bytes, slot, legacySizes, LEGACY_SAVE_BLOCK2_SIZE, LEGACY_SAVE_BLOCK1_SIZE);
       if (!isLikelyLegacyWasmSaveBlock(blocks)) continue;
       writeMigratedSaveSlot(out, bytes, slot, blocks);
       didMigrate = true;
@@ -396,9 +496,34 @@ function migrateLegacyWasmSave(bytes) {
   return didMigrate ? out : null;
 }
 
+function repairStaleBagEncryptionSave(bytes) {
+  const out = new Uint8Array(bytes);
+  let didRepair = false;
+
+  for (let slot = 0; slot < 2; slot++) {
+    let sectorDataSizes = null;
+    if (hasValidEmeraldSaveSlot(bytes, slot, SAVE_SECTOR_DATA_SIZES)) sectorDataSizes = SAVE_SECTOR_DATA_SIZES;
+    else if (hasValidEmeraldSaveSlot(bytes, slot, VANILLA_SAVE_SECTOR_DATA_SIZES)) sectorDataSizes = VANILLA_SAVE_SECTOR_DATA_SIZES;
+    if (!sectorDataSizes) continue;
+
+    const blocks = readSlotSaveBlocks(bytes, slot, sectorDataSizes, SAVE_BLOCK2_SIZE, SAVE_BLOCK1_SIZE);
+    const repaired = repairStaleBagEncryption(blocks);
+    if (!repaired) continue;
+
+    writeCurrentSaveSlot(out, bytes, slot, repaired);
+    didRepair = true;
+  }
+
+  return didRepair ? out : null;
+}
+
 function normalizeSaveForCurrentBuild(bytes) {
   const migrated = migrateLegacyWasmSave(bytes);
-  if (migrated) return migrated;
+  if (migrated) return repairStaleBagEncryptionSave(migrated) ?? migrated;
+
+  const repaired = repairStaleBagEncryptionSave(bytes);
+  if (repaired) return repaired;
+
   return isValidCurrentBuildSave(bytes) ? bytes : null;
 }
 
