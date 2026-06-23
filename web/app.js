@@ -678,11 +678,12 @@ function windowMask(x, y) {
   return u16[(REG + REG_OFFSET_WINOUT) >> 1] & 0x3f;
 }
 
-function activeBlendColor(color, layer, pixel, effectsEnabled, y) {
+function activeBlendColor(color, layer, pixel, effectsEnabled, y, forceAlphaBlend = false) {
   const bldcnt = u16[(REG + 0x50) >> 1];
   const effect = (bldcnt >> 6) & 3;
   const sourceTargets = bldcnt & 0x3f;
-  if (!effectsEnabled || !(sourceTargets & layer) || effect === 0) return color;
+  const isSourceTarget = (sourceTargets & layer) || (forceAlphaBlend && effect === 1);
+  if ((!effectsEnabled && !(forceAlphaBlend && effect === 1)) || !isSourceTarget || effect === 0) return color;
 
   if (effect === 1 && (bldcnt >> 8) & layerData[pixel]) {
     const alpha = u16[(REG + 0x52) >> 1];
@@ -705,14 +706,14 @@ function activeBlendColor(color, layer, pixel, effectsEnabled, y) {
   return color;
 }
 
-function putPixel(x, y, color, layer = 0x20) {
+function putPixel(x, y, color, layer = 0x20, forceAlphaBlend = false) {
   if (x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT) return;
   const mask = windowMask(x, y);
   // Window bit 5 enables color effects; it does not hide the backdrop.
   if (layer !== 0x20 && !(mask & layer)) return;
 
   const pixel = y * WIDTH + x;
-  const output = activeBlendColor(color, layer, pixel, mask & 0x20, y);
+  const output = activeBlendColor(color, layer, pixel, mask & 0x20, y, forceAlphaBlend);
   const p = pixel * 4;
   image.data[p] = output[0];
   image.data[p + 1] = output[1];
@@ -902,6 +903,8 @@ function renderSprites(dispcnt, priority = null) {
     const a1 = u16[base + 1];
     const a2 = u16[base + 2];
     const affineMode = (a0 >> 8) & 3;
+    const objMode = (a0 >> 10) & 3;
+    const forceAlphaBlend = objMode === 1;
     const affine = affineMode & 1;
     if (!affine && (a0 & 0x0200)) continue;
     const shape = (a0 >> 14) & 3;
@@ -939,7 +942,7 @@ function renderSprites(dispcnt, priority = null) {
           const py = ((pc * dx + pd * dy) >> 8) + texCy;
           if (px < 0 || py < 0 || px >= w || py >= h) continue;
           const color = objPixel(tileBase, px, py, w, color256, palette, mapping1d);
-          if (color) putPixel(ox + x, oy + y, color, 0x10);
+          if (color) putPixel(ox + x, oy + y, color, 0x10, forceAlphaBlend);
         }
       }
     } else {
@@ -948,7 +951,7 @@ function renderSprites(dispcnt, priority = null) {
           const px = a1 & 0x1000 ? w - 1 - x : x;
           const py = a1 & 0x2000 ? h - 1 - y : y;
           const color = objPixel(tileBase, px, py, w, color256, palette, mapping1d);
-          if (color) putPixel(ox + x, oy + y, color, 0x10);
+          if (color) putPixel(ox + x, oy + y, color, 0x10, forceAlphaBlend);
         }
       }
     }
