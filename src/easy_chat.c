@@ -1327,6 +1327,10 @@ static void StartEasyChatScreen(u8 taskId, TaskFunc taskFunc)
 
 static void Task_InitEasyChatScreen(u8 taskId)
 {
+#if WASM
+    if (InitEasyChatScreen(taskId) == TRUE)
+        return;
+#else
     if (!IsOverworldLinkActive())
     {
         while (InitEasyChatScreen(taskId));
@@ -1336,6 +1340,7 @@ static void Task_InitEasyChatScreen(u8 taskId)
         if (InitEasyChatScreen(taskId) == TRUE)
             return;
     }
+#endif
     StartEasyChatScreen(taskId, Task_EasyChatScreen);
 }
 
