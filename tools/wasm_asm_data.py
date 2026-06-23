@@ -908,6 +908,8 @@ def expand_macro(
 
     if stripped.startswith("copyvar "):
         destination, source = split_args(stripped[len("copyvar "):])[:2]
+        if not is_var_id(source):
+            return [f".byte {parse_int('SCR_OP_SETVAR', constants)}", f".2byte {destination}", f".2byte {source}"]
         return [f".byte {parse_int('SCR_OP_COPYVAR', constants)}", f".2byte {destination}", f".2byte {source}"]
 
     if stripped.startswith("setorcopyvar "):
