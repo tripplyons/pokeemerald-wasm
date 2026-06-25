@@ -5,6 +5,7 @@
 #include "random.h"
 #include "task.h"
 #include "trig.h"
+#include "util.h"
 #include "constants/rgb.h"
 
 static void AnimConfusionDuck(struct Sprite *);
@@ -17,6 +18,8 @@ static void AnimCirclingSparkle(struct Sprite *);
 static void AnimShakeMonOrBattlePlatforms(struct Sprite *);
 static void AnimShakeMonOrBattlePlatforms_Step(struct Sprite *);
 static void AnimShakeMonOrBattlePlatforms_UpdateCoordOffsetEnabled(void);
+static void StoreShakePtrInData6(struct Sprite *, u16 *);
+static u16 *GetShakePtrFromData6(struct Sprite *);
 static void AnimHitSplatBasic(struct Sprite *);
 static void AnimHitSplatPersistent(struct Sprite *);
 static void AnimHitSplatHandleInvert(struct Sprite *);
@@ -538,7 +541,7 @@ void AnimTask_BlendColorCycleExclude(u8 taskId)
 
 static void BlendColorCycleExclude(u8 taskId, u8 startBlendAmount, u8 targetBlendAmount)
 {
-    u32 selectedPalettes = ((u16)gTasks[taskId].tPalSelectorHi << 16) | (u16)gTasks[taskId].tPalSelectorLo;
+    u32 selectedPalettes = ((u32)(u16)gTasks[taskId].tPalSelectorHi << 16) | (u16)gTasks[taskId].tPalSelectorLo;
     BeginNormalPaletteFade(
         selectedPalettes,
         gTasks[taskId].tDelay,
@@ -850,6 +853,19 @@ void AnimTask_TintPalettes(u8 taskId)
 #define sShakePtrLo    data[6]
 #define sShakePtrHi    data[7]
 
+static void StoreShakePtrInData6(struct Sprite *sprite, u16 *shakePtr)
+{
+    StoreWordInTwoHalfwords((u16 *)&sprite->sShakePtrLo, (u32)(uintptr_t)shakePtr);
+}
+
+static u16 *GetShakePtrFromData6(struct Sprite *sprite)
+{
+    u32 ptr;
+
+    LoadWordFromTwoHalfwords((u16 *)&sprite->sShakePtrLo, &ptr);
+    return (u16 *)(uintptr_t)ptr;
+}
+
 static void AnimShakeMonOrBattlePlatforms(struct Sprite *sprite)
 {
     CMD_ARGS(velocity, shakeTimer, shakeDuration, type, battlerSelector);
@@ -863,20 +879,20 @@ static void AnimShakeMonOrBattlePlatforms(struct Sprite *sprite)
     switch (cmd->type)
     {
     case SHAKE_BG_X:
-        StoreSpriteCallbackInData6(sprite, (void *)&gBattle_BG3_X);
+        StoreShakePtrInData6(sprite, &gBattle_BG3_X);
         break;
     case SHAKE_BG_Y:
-        StoreSpriteCallbackInData6(sprite, (void *)&gBattle_BG3_Y);
+        StoreShakePtrInData6(sprite, &gBattle_BG3_Y);
         break;
     case SHAKE_MON_X:
-        StoreSpriteCallbackInData6(sprite, (void *)&gSpriteCoordOffsetX);
+        StoreShakePtrInData6(sprite, (u16 *)&gSpriteCoordOffsetX);
         break;
     default:
-        StoreSpriteCallbackInData6(sprite, (void *)&gSpriteCoordOffsetY);
+        StoreShakePtrInData6(sprite, (u16 *)&gSpriteCoordOffsetY);
         break;
     }
 
-    sprite->sOriginalValue = *(u16 *)(sprite->sShakePtrLo | (sprite->sShakePtrHi << 16));
+    sprite->sOriginalValue = *GetShakePtrFromData6(sprite);
     sprite->sType = cmd->type;
     if (sprite->sType == SHAKE_MON_X || sprite->sType == SHAKE_MON_Y)
         AnimShakeMonOrBattlePlatforms_UpdateCoordOffsetEnabled();
@@ -898,13 +914,13 @@ static void AnimShakeMonOrBattlePlatforms_Step(struct Sprite *sprite)
         else
         {
             sprite->sShakeTimer = sprite->sShakeDuration;
-            *(u16 *)(sprite->sShakePtrLo | (sprite->sShakePtrHi << 16)) += sprite->sShakeVelocity;
+            *GetShakePtrFromData6(sprite) += sprite->sShakeVelocity;
             sprite->sShakeVelocity = -sprite->sShakeVelocity;
         }
     }
     else
     {
-        *(u16 *)(sprite->sShakePtrLo | (sprite->sShakePtrHi << 16)) = sprite->sOriginalValue;
+        *GetShakePtrFromData6(sprite) = sprite->sOriginalValue;
         if (sprite->sType == SHAKE_MON_X || sprite->sType == SHAKE_MON_Y)
         {
             for (i = 0; i < gBattlersCount; i++)

@@ -132,7 +132,7 @@ void StoreWordInTwoHalfwords(u16 *h, u32 w)
 
 void LoadWordFromTwoHalfwords(u16 *h, u32 *w)
 {
-    *w = h[0] | (s16)h[1] << 16;
+    *w = h[0] | ((u32)h[1] << 16);
 }
 
 void SetBgAffineStruct(struct BgAffineSrcData *src, u32 texX, u32 texY, s16 scrX, s16 scrY, s16 sx, s16 sy, u16 alpha)

@@ -416,14 +416,15 @@ u8 GetAnimBattlerSpriteId(u8 animBattler)
 
 void StoreSpriteCallbackInData6(struct Sprite *sprite, void (*callback)(struct Sprite *))
 {
-    sprite->data[6] = (u32)(callback) & 0xffff;
-    sprite->data[7] = (u32)(callback) >> 16;
+    StoreWordInTwoHalfwords((u16 *)&sprite->data[6], (u32)(uintptr_t)callback);
 }
 
 void SetCallbackToStoredInData6(struct Sprite *sprite)
 {
-    u32 callback = (u16)sprite->data[6] | (sprite->data[7] << 16);
-    sprite->callback = (void (*)(struct Sprite *))callback;
+    u32 callback;
+
+    LoadWordFromTwoHalfwords((u16 *)&sprite->data[6], &callback);
+    sprite->callback = (void (*)(struct Sprite *))(uintptr_t)callback;
 }
 
 // Sprite data for TranslateSpriteInCircle/Ellipse and related
@@ -1952,7 +1953,7 @@ void StorePointerInVars(s16 *lo, s16 *hi, const void *ptr)
 
 void *LoadPointerFromVars(s16 lo, s16 hi)
 {
-    return (void *)((u16)lo | ((u16)hi << 16));
+    return (void *)(uintptr_t)((u16)lo | ((u32)(u16)hi << 16));
 }
 
 void PrepareEruptAnimTaskData(struct Task *task, u8 spriteId, s16 xScaleStart, s16 yScaleStart, s16 xScaleEnd, s16 yScaleEnd, u16 duration)
