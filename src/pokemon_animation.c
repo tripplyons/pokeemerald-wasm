@@ -1638,35 +1638,33 @@ static void Anim_VerticalStretch(struct Sprite *sprite)
 static void VerticalShakeTwice(struct Sprite *sprite)
 {
     u8 index = sprite->data[2];
-    u8 var7 = sprite->data[6];
-    u8 var5 = sVerticalShakeData[sprite->data[5]][0];
-    u8 var6 = sVerticalShakeData[sprite->data[5]][1];
-    u8 amplitude = 0;
+    u8 timer = sprite->data[6];
+    u8 amplitude = sVerticalShakeData[sprite->data[5]][0];
+    u8 duration = sVerticalShakeData[sprite->data[5]][1];
 
-    if (var5 != (u8)-2)
-        amplitude = (var6 - var7) * var5 / var6;
-    else
-        amplitude = 0;
-
-    if (var5 == (u8)-1)
+    if (amplitude == (u8)-1)
     {
         sprite->callback = WaitAnimEnd;
         sprite->y2 = 0;
+        return;
+    }
+
+    if (amplitude != (u8)-2)
+        amplitude = (duration - timer) * amplitude / duration;
+    else
+        amplitude = 0;
+
+    sprite->y2 = Sin(index, amplitude);
+
+    if (timer == duration)
+    {
+        sprite->data[5]++;
+        sprite->data[6] = 0;
     }
     else
     {
-        sprite->y2 = Sin(index, amplitude);
-
-        if (var7 == var6)
-        {
-            sprite->data[5]++;
-            sprite->data[6] = 0;
-        }
-        else
-        {
-            sprite->data[2] += sprite->data[0];
-            sprite->data[6]++;
-        }
+        sprite->data[2] += sprite->data[0];
+        sprite->data[6]++;
     }
 }
 
@@ -4063,38 +4061,34 @@ static void Anim_HorizontalStretchFar_Slow(struct Sprite *sprite)
 
 static void VerticalShakeLowTwice(struct Sprite *sprite)
 {
-    u8 var6, var7;
-    u8 var8 = sprite->data[2];
-    u8 var9 = sprite->data[6];
-    u8 var5 = sVerticalShakeData[sprite->data[5]][0];
-    if (var5 != (u8)-1)
-        var5 = sprite->data[7];
+    u8 index = sprite->data[2];
+    u8 timer = sprite->data[6];
+    u8 phase = sVerticalShakeData[sprite->data[5]][0];
+    u8 duration = sVerticalShakeData[sprite->data[5]][1];
+    u8 amplitude;
 
-    var6 = sVerticalShakeData[sprite->data[5]][1];
-    var7 = 0;
-    if (sVerticalShakeData[sprite->data[5]][0] != (u8)-2)
-        var7 = (var6 - var9) * var5 / var6;
-    else
-        var7 = 0;
-
-    if (var5 == (u8)-1)
+    if (phase == (u8)-1)
     {
         sprite->callback = WaitAnimEnd;
         sprite->y2 = 0;
+        return;
+    }
+
+    if (phase != (u8)-2)
+        amplitude = (duration - timer) * sprite->data[7] / duration;
+    else
+        amplitude = 0;
+
+    sprite->y2 = Sin((index + 192) % 256, amplitude) + amplitude;
+    if (timer == duration)
+    {
+        sprite->data[5]++;
+        sprite->data[6] = 0;
     }
     else
     {
-        sprite->y2 = Sin((var8 + 192) % 256, var7) + var7;
-        if (var9 == var6)
-        {
-            sprite->data[5]++;
-            sprite->data[6] = 0;
-        }
-        else
-        {
-            sprite->data[2] += sprite->data[0];
-            sprite->data[6]++;
-        }
+        sprite->data[2] += sprite->data[0];
+        sprite->data[6]++;
     }
 }
 
