@@ -369,8 +369,8 @@ static UiLayout make_layout(void)
     const float faceX = width - 230.0f;
     add_button(&layout, "B", (Rectangle){faceX, y + unit, 70.0f, 70.0f}, BUTTON_B);
     add_button(&layout, "A", (Rectangle){faceX + 90.0f, y + 30.0f, 70.0f, 70.0f}, BUTTON_A);
-    add_button(&layout, "L", (Rectangle){50.0f, y - 20.0f, 95.0f, 34.0f}, BUTTON_L);
-    add_button(&layout, "R", (Rectangle){width - 145.0f, y - 20.0f, 95.0f, 34.0f}, BUTTON_R);
+    add_button(&layout, "L", (Rectangle){150.0f, y - 20.0f, 95.0f, 34.0f}, BUTTON_L);
+    add_button(&layout, "R", (Rectangle){width - 245.0f, y - 20.0f, 95.0f, 34.0f}, BUTTON_R);
     add_button(&layout, "SELECT", (Rectangle){width * 0.5f - 110.0f, y + unit * 2.2f, 95.0f, 34.0f}, BUTTON_SELECT);
     add_button(&layout, "START", (Rectangle){width * 0.5f + 15.0f, y + unit * 2.2f, 95.0f, 34.0f}, BUTTON_START);
 
@@ -454,7 +454,7 @@ static void draw_speed_button(const SpeedButton *button, float speed)
              RAYWHITE);
 }
 
-static void draw_ui(Texture2D texture, const UiLayout *layout, uint32_t held, float speed, int internalFps, int displayFps, const char *savePath)
+static void draw_ui(Texture2D texture, const UiLayout *layout, uint32_t held, float speed, int internalFps, int displayFps)
 {
     BeginDrawing();
     ClearBackground((Color){18, 20, 28, 255});
@@ -466,14 +466,20 @@ static void draw_ui(Texture2D texture, const UiLayout *layout, uint32_t held, fl
                    0.0f,
                    WHITE);
     DrawText("pokeemerald wasm2c native", 20, 8, 20, RAYWHITE);
-    DrawText(TextFormat("Internal FPS: %d   Display FPS: %d", internalFps, displayFps),
-             (int)layout->screen.x,
+
+    const char *fpsText = TextFormat("Internal FPS: %d   Display FPS: %d", internalFps, displayFps);
+    DrawText(fpsText,
+             (int)(layout->screen.x + (layout->screen.width - MeasureText(fpsText, 18)) * 0.5f),
              (int)(layout->screen.y + layout->screen.height + 8.0f),
              18,
              RAYWHITE);
-    DrawText("Keyboard: arrows, Z=A, X=B, Enter=Start, Shift=Select, A=L, S=R", 20, GetScreenHeight() - 28, 18, GRAY);
-    DrawText(TextFormat("Speed: %.3gx", speed), GetScreenWidth() / 2 - 160, (int)(layout->speedButtons[0].rect.y - 24), 18, GRAY);
-    DrawText(TextFormat("Save: %s", savePath), 20, GetScreenHeight() - 52, 16, GRAY);
+
+    const char *speedText = TextFormat("Speed: %.3gx", speed);
+    DrawText(speedText,
+             (int)(GetScreenWidth() * 0.5f - MeasureText(speedText, 18) * 0.5f),
+             (int)(layout->speedButtons[0].rect.y - 24),
+             18,
+             GRAY);
     for (size_t i = 0; i < layout->buttonCount; i++)
         draw_button(&layout->buttons[i], held);
     for (size_t i = 0; i < layout->speedButtonCount; i++)
@@ -649,7 +655,7 @@ int main(int argc, char **argv)
 
         uint32_t displayPtr = w2c_0x24pokeemerald0x2Ewasm_WasmDisplayBuffer(&instance);
         UpdateTexture(texture, w2c_0x24pokeemerald0x2Ewasm_memory(&instance)->data + displayPtr);
-        draw_ui(texture, &layout, held, speed, internalFps, displayFps, savePath);
+        draw_ui(texture, &layout, held, speed, internalFps, displayFps);
 
         if (framesToRun > 0 && frame % SAVE_FLUSH_FRAMES == 0)
             lastSaveHash = save_flash_if_changed(&instance, savePath, lastSaveHash, false);
