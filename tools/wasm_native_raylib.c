@@ -465,8 +465,6 @@ static void draw_ui(Texture2D texture, const UiLayout *layout, uint32_t held, fl
                    (Vector2){0, 0},
                    0.0f,
                    WHITE);
-    DrawText("pokeemerald wasm2c native", 20, 8, 20, RAYWHITE);
-
     const char *fpsText = TextFormat("Internal FPS: %d   Display FPS: %d", internalFps, displayFps);
     DrawText(fpsText,
              (int)(layout->screen.x + (layout->screen.width - MeasureText(fpsText, 18)) * 0.5f),
