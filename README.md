@@ -8,4 +8,10 @@ Play it at [pokeemerald.com](https://pokeemerald.com).
 
 `make native-raylib` builds `build/native/pokeemerald-native` by first building the WASM module, converting it to C with WABT's `wasm2c`, and linking a Raylib host app. The native app uses the same WASM ABI as the browser frontend and stores flash saves in `build/native/pokeemerald-native.sav`.
 
+## Kindle Scribe frontend
+
+`make native-kindle` builds `build/native/pokeemerald-kindle`, a Linux framebuffer frontend intended for jailbroken Kindle Scribe devices. It uses the same wasm2c game core, writes grayscale frames directly to `/dev/fb0`, reads touch/keyboard events from `/dev/input/event*`, draws on-screen GBA controls, sends Kindle MXCFB e-ink refresh ioctls when available, and stores flash saves in `build/native/pokeemerald-kindle.sav`.
+
+For real Scribe deployment, cross-compile with a Kindle-compatible Linux toolchain and target WABT runtime, for example by overriding `KINDLE_CC`, `KINDLE_CFLAGS`, and `KINDLE_WABT_PREFIX`. Runtime options include `--fb /dev/fb0`, `--input /dev/input/eventN`, `--display-fps 4`, `--save path`, and `--frames N`.
+
 The original pokeemerald README has been preserved at [docs/original-pokeemerald-readme.md](docs/original-pokeemerald-readme.md).

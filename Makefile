@@ -21,6 +21,9 @@ WASM2C ?= $(shell { command -v wasm2c || { test -x /opt/homebrew/opt/wabt/bin/wa
 WABT_PREFIX ?= $(shell if [ -n "$(WASM2C)" ]; then dirname "$$(dirname "$(WASM2C)")"; else brew --prefix wabt 2>/dev/null || true; fi)
 NATIVE_CC ?= $(shell { command -v clang || command -v cc; })
 NATIVE_CFLAGS ?= -O2 -DNDEBUG
+KINDLE_CC ?= $(NATIVE_CC)
+KINDLE_CFLAGS ?= $(NATIVE_CFLAGS)
+KINDLE_WABT_PREFIX ?= $(WABT_PREFIX)
 RAYLIB_CFLAGS ?= $(shell pkg-config --cflags raylib 2>/dev/null)
 RAYLIB_LIBS ?= $(shell pkg-config --libs raylib 2>/dev/null)
 
@@ -90,6 +93,9 @@ NATIVE_WASM2C_H := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.h
 NATIVE_WASM2C_O := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.o
 NATIVE_RAYLIB_O := $(NATIVE_BUILD_DIR)/wasm_native_raylib.o
 NATIVE_RAYLIB := $(NATIVE_BUILD_DIR)/pokeemerald-native
+KINDLE_WASM2C_O := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.kindle.o
+KINDLE_FRONTEND_O := $(NATIVE_BUILD_DIR)/wasm_native_kindle.o
+NATIVE_KINDLE := $(NATIVE_BUILD_DIR)/pokeemerald-kindle
 ASSETS_DIR_NAME := $(BUILD_DIR)/assets
 
 ELF_NAME := $(ROM_NAME:.gba=.elf)
@@ -265,6 +271,8 @@ wasm: generated wasm-assets $(WASM)
 
 native-raylib: $(NATIVE_RAYLIB)
 
+native-kindle: $(NATIVE_KINDLE)
+
 wasm-assets: $(GFX)
 	uv run python tools/generate_wasm_assets.py
 
@@ -298,6 +306,16 @@ $(NATIVE_RAYLIB_O): tools/wasm_native_raylib.c $(NATIVE_WASM2C_H) Makefile
 
 $(NATIVE_RAYLIB): $(NATIVE_WASM2C_O) $(NATIVE_RAYLIB_O) Makefile
 	$(NATIVE_CC) $(NATIVE_CFLAGS) -o $@ $(NATIVE_WASM2C_O) $(NATIVE_RAYLIB_O) $(WABT_PREFIX)/lib/libwasm-rt-impl.a $(RAYLIB_LIBS) -lm
+
+$(KINDLE_WASM2C_O): $(NATIVE_WASM2C_C) $(NATIVE_WASM2C_H) Makefile
+	@test -f "$(KINDLE_WABT_PREFIX)/lib/libwasm-rt-impl.a" || { echo "wabt wasm-rt library not found under $(KINDLE_WABT_PREFIX); set KINDLE_WABT_PREFIX=/path/to/target/wabt"; exit 1; }
+	$(KINDLE_CC) $(KINDLE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(KINDLE_WABT_PREFIX)/include -Wno-unused-function -Wno-parentheses-equality -c $< -o $@
+
+$(KINDLE_FRONTEND_O): tools/wasm_native_kindle.c $(NATIVE_WASM2C_H) Makefile
+	$(KINDLE_CC) $(KINDLE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(KINDLE_WABT_PREFIX)/include -c $< -o $@
+
+$(NATIVE_KINDLE): $(KINDLE_WASM2C_O) $(KINDLE_FRONTEND_O) Makefile
+	$(KINDLE_CC) $(KINDLE_CFLAGS) -o $@ $(KINDLE_WASM2C_O) $(KINDLE_FRONTEND_O) $(KINDLE_WABT_PREFIX)/lib/libwasm-rt-impl.a -lm
 
 $(WASM_OBJ_DIR)/%.o: $(C_SUBDIR)/%.c
 	@mkdir -p $(dir $@)
