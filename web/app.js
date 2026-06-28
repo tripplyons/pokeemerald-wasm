@@ -73,9 +73,6 @@ const speedParam = searchParams.get('speed');
 const automate = searchParams.get('automate') === '1';
 const MIN_SPEED = 0.1;
 const MAX_SPEED = 1000;
-const UNLIMITED_SPEED_EXPONENT = Math.log10(MAX_SPEED) + 1;
-const MIN_SPEED_EXPONENT = Math.log10(MIN_SPEED);
-const MAX_SPEED_EXPONENT = Math.log10(MAX_SPEED);
 const FAST_FRAME_BUDGET_MS = 16;
 
 const buttons = {
@@ -99,8 +96,10 @@ const keyMap = new Map([
 
 const canvas = document.querySelector('#screen');
 const statusEl = document.querySelector('#status');
-const speedInput = document.querySelector('#speed');
+const speedButtons = document.querySelectorAll('[data-speed]');
 const speedValue = document.querySelector('#speed-value');
+const fullscreenButton = document.querySelector('#fullscreen');
+const shell = document.querySelector('.shell');
 const downloadSaveButton = document.querySelector('#download-save');
 const uploadSaveInput = document.querySelector('#upload-save');
 const ctx = canvas.getContext('2d');
@@ -120,6 +119,7 @@ let renderedFrames = 0;
 let emulatedFrames = 0;
 let gameFrameAccumulator = 0;
 let speed = 1;
+let lastFiniteSpeed = 1;
 let currentFrame = 0;
 let lastSavedFlashHash = 0;
 let lastSaveFlushTime = performance.now();
@@ -564,16 +564,6 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function speedToExponent(value) {
-  if (value === Infinity) return UNLIMITED_SPEED_EXPONENT;
-  return Math.log10(clamp(value, MIN_SPEED, MAX_SPEED));
-}
-
-function exponentToSpeed(value) {
-  if (value >= UNLIMITED_SPEED_EXPONENT) return Infinity;
-  return 10 ** clamp(value, MIN_SPEED_EXPONENT, MAX_SPEED_EXPONENT);
-}
-
 function formatSpeed(value) {
   if (value === Infinity) return 'unlimited';
   if (value < 1) return `${value.toFixed(1)}x`;
@@ -581,10 +571,22 @@ function formatSpeed(value) {
   return `${Math.round(value)}x`;
 }
 
-function setSpeedFromExponent(exponent) {
-  speed = exponentToSpeed(Number(exponent));
-  speedInput.value = String(speedToExponent(speed));
+function setSpeed(value) {
+  speed = value === Infinity ? Infinity : clamp(value, MIN_SPEED, MAX_SPEED);
+  if (speed !== Infinity) lastFiniteSpeed = speed;
   speedValue.textContent = formatSpeed(speed);
+  speedButtons.forEach((button) => {
+    button.classList.toggle('active',
+      (button.dataset.speed === '1' && speed === 1) || (button.dataset.speed === 'unlimited' && speed === Infinity));
+  });
+}
+
+function adjustSpeed(multiplier) {
+  setSpeed((speed === Infinity ? lastFiniteSpeed : speed) * multiplier);
+}
+
+function toggleUnlimitedSpeed() {
+  setSpeed(speed === Infinity ? lastFiniteSpeed : Infinity);
 }
 
 function resetFpsCounters() {
@@ -600,9 +602,18 @@ function initialSpeed() {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
-function configureSpeedInput() {
-  speedInput.min = String(MIN_SPEED_EXPONENT);
-  speedInput.max = String(UNLIMITED_SPEED_EXPONENT);
+function updateFullscreenButton() {
+  const isFullscreen = document.fullscreenElement === shell;
+  fullscreenButton.textContent = isFullscreen ? 'Exit Big Picture' : 'Big Picture';
+  fullscreenButton.classList.toggle('active', isFullscreen);
+}
+
+async function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    await document.exitFullscreen();
+  } else {
+    await shell.requestFullscreen();
+  }
 }
 
 function gbaColor(value) {
@@ -1175,12 +1186,26 @@ document.querySelectorAll('[data-key]').forEach((button) => {
   button.addEventListener('pointerleave', () => setPressed(name, false));
 });
 
-configureSpeedInput();
-
-speedInput.addEventListener('input', () => {
-  setSpeedFromExponent(speedInput.value);
-  resetFpsCounters();
+speedButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    if (button.dataset.speed === 'unlimited') toggleUnlimitedSpeed();
+    else if (button.dataset.speed === '1') setSpeed(1);
+    else adjustSpeed(Number(button.dataset.speed));
+    resetFpsCounters();
+  });
 });
+
+fullscreenButton.addEventListener('click', async () => {
+  try {
+    await toggleFullscreen();
+  } catch (error) {
+    console.error(error);
+    statusEl.textContent = error.stack || String(error);
+  }
+});
+
+document.addEventListener('fullscreenchange', updateFullscreenButton);
+updateFullscreenButton();
 
 downloadSaveButton.addEventListener('click', downloadSave);
 
@@ -1214,7 +1239,7 @@ async function boot(saveBytes) {
   gameFrameAccumulator = 0;
   resetFpsCounters();
   statusText = `running — ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MiB wasm`;
-  setSpeedFromExponent(speedToExponent(initialSpeed()));
+  setSpeed(initialSpeed());
   statusEl.textContent = fpsStatus(0, 0);
   if (automate) {
     render();
