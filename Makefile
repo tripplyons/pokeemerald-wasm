@@ -17,6 +17,12 @@ COMPARE     ?= 0
 
 WASM_CC ?= $(shell { command -v /opt/homebrew/opt/llvm/bin/clang || command -v /usr/local/opt/llvm/bin/clang || command -v clang; })
 WASM_LD ?= $(shell { command -v wasm-ld || find "$$HOME/.rustup/toolchains" -path '*/gcc-ld/wasm-ld' -type f 2>/dev/null | head -n1; })
+WASM2C ?= $(shell { command -v wasm2c || { test -x /opt/homebrew/opt/wabt/bin/wasm2c && echo /opt/homebrew/opt/wabt/bin/wasm2c; } || { test -x /usr/local/opt/wabt/bin/wasm2c && echo /usr/local/opt/wabt/bin/wasm2c; }; } 2>/dev/null)
+WABT_PREFIX ?= $(shell if [ -n "$(WASM2C)" ]; then dirname "$$(dirname "$(WASM2C)")"; else brew --prefix wabt 2>/dev/null || true; fi)
+NATIVE_CC ?= $(shell { command -v clang || command -v cc; })
+NATIVE_CFLAGS ?= -O0 -g
+RAYLIB_CFLAGS ?= $(shell pkg-config --cflags raylib 2>/dev/null)
+RAYLIB_LIBS ?= $(shell pkg-config --libs raylib 2>/dev/null)
 
 ifeq (modern,$(MAKECMDGOALS))
   MODERN := 1
@@ -78,6 +84,12 @@ WASM_BUILD_DIR := $(BUILD_DIR)/wasm
 WASM_OBJ_DIR := $(WASM_BUILD_DIR)/obj
 WASM := $(WASM_BUILD_DIR)/$(FILE_NAME).wasm
 WASM_SOUND_HEADER := $(WASM_BUILD_DIR)/wasm_sound.h
+NATIVE_BUILD_DIR := $(BUILD_DIR)/native
+NATIVE_WASM2C_C := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.c
+NATIVE_WASM2C_H := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.h
+NATIVE_WASM2C_O := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.o
+NATIVE_RAYLIB_O := $(NATIVE_BUILD_DIR)/wasm_native_raylib.o
+NATIVE_RAYLIB := $(NATIVE_BUILD_DIR)/pokeemerald-native
 ASSETS_DIR_NAME := $(BUILD_DIR)/assets
 
 ELF_NAME := $(ROM_NAME:.gba=.elf)
@@ -166,8 +178,8 @@ MAKEFLAGS += --no-print-directory
 # Delete files that weren't built properly
 .DELETE_ON_ERROR:
 
-RULES_NO_SCAN += libagbsyscall clean clean-assets tidy tidymodern tidynonmodern generated clean-generated wasm-assets wasm-text clean-wasm serve-wasm
-.PHONY: all rom modern compare wasm wasm-assets clean-wasm serve-wasm wrangler-site
+RULES_NO_SCAN += libagbsyscall clean clean-assets tidy tidymodern tidynonmodern generated clean-generated wasm-assets wasm-text clean-wasm clean-native serve-wasm
+.PHONY: all rom modern compare wasm wasm-assets native-raylib clean-wasm clean-native serve-wasm wrangler-site
 .PHONY: $(RULES_NO_SCAN)
 
 infoshell = $(foreach line, $(shell $1 | sed "s/ /__SPACE__/g"), $(info $(subst __SPACE__, ,$(line))))
@@ -177,7 +189,7 @@ NODEP ?= 0
 # Check if we need to pre-build tools and generate assets based on the chosen rule.
 SETUP_PREREQS ?= 1
 # Disable dependency scanning for the normal GBA objects when only the wasm build needs C sources.
-ifneq (,$(filter wasm,$(MAKECMDGOALS)))
+ifneq (,$(filter wasm native-raylib,$(MAKECMDGOALS)))
   NODEP := 1
   SETUP_PREREQS := 1
 endif
@@ -251,6 +263,8 @@ endif
 
 wasm: generated wasm-assets $(WASM)
 
+native-raylib: $(NATIVE_RAYLIB)
+
 wasm-assets: $(GFX)
 	uv run python tools/generate_wasm_assets.py
 
@@ -266,6 +280,25 @@ $(WASM): Makefile $(WASM_C_OBJS) $(WASM_DATA_OBJS)
 	@test -n "$(WASM_LD)" || { echo "wasm-ld not found; set WASM_LD=/path/to/wasm-ld"; exit 1; }
 	$(WASM_LD) --no-entry --allow-undefined --initial-memory=268435456 --max-memory=268435456 --export=AgbMain --export=WasmRunFrame --export-all -o $@ $(filter %.o,$^)
 
+$(NATIVE_WASM2C_C): $(WASM)
+	@test -n "$(WASM2C)" || { echo "wasm2c not found; install wabt or set WASM2C=/path/to/wasm2c"; exit 1; }
+	@mkdir -p $(NATIVE_BUILD_DIR)
+	$(WASM2C) $< -o $@
+
+$(NATIVE_WASM2C_H): $(NATIVE_WASM2C_C)
+	@:
+
+$(NATIVE_WASM2C_O): $(NATIVE_WASM2C_C) $(NATIVE_WASM2C_H)
+	@test -f "$(WABT_PREFIX)/lib/libwasm-rt-impl.a" || { echo "wabt wasm-rt library not found under $(WABT_PREFIX); set WABT_PREFIX=/path/to/wabt"; exit 1; }
+	$(NATIVE_CC) $(NATIVE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(WABT_PREFIX)/include -Wno-unused-function -Wno-parentheses-equality -c $< -o $@
+
+$(NATIVE_RAYLIB_O): tools/wasm_native_raylib.c $(NATIVE_WASM2C_H)
+	@test -n "$(RAYLIB_LIBS)" || { echo "raylib pkg-config metadata not found; install raylib or set RAYLIB_CFLAGS/RAYLIB_LIBS"; exit 1; }
+	$(NATIVE_CC) $(NATIVE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(WABT_PREFIX)/include $(RAYLIB_CFLAGS) -c $< -o $@
+
+$(NATIVE_RAYLIB): $(NATIVE_WASM2C_O) $(NATIVE_RAYLIB_O)
+	$(NATIVE_CC) $(NATIVE_CFLAGS) -o $@ $^ $(WABT_PREFIX)/lib/libwasm-rt-impl.a $(RAYLIB_LIBS) -lm
+
 $(WASM_OBJ_DIR)/%.o: $(C_SUBDIR)/%.c
 	@mkdir -p $(dir $@)
 	$(WASM_CC) --target=wasm32-unknown-unknown -DMODERN=1 -DWASM=1 -I $(WASM_BUILD_DIR) -I include/wasm -I include -iquote include -E $< | $(PREPROC) -i -g $(ASSETS_DIR_NAME) $< charmap.txt | $(WASM_CC) --target=wasm32-unknown-unknown -x c -O2 -Wno-incompatible-library-redeclaration -Wno-unknown-attributes -Wno-ignored-attributes -Wno-parentheses -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast -Wno-builtin-requires-header -Wno-gnu-alignof-expression -Wno-unknown-escape-sequence -Wno-excess-initializers -c - -o $@
@@ -277,6 +310,9 @@ $(WASM_OBJ_DIR)/%.o: $(DATA_ASM_SUBDIR)/%.s tools/wasm_asm_data.py | generated
 
 clean-wasm:
 	rm -rf $(WASM_BUILD_DIR)
+
+clean-native:
+	rm -rf $(NATIVE_BUILD_DIR)
 
 serve-wasm: $(WASM)
 	node web/server.mjs
