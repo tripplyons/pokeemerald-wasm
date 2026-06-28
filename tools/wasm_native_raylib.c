@@ -21,6 +21,9 @@
 #define FLASH_SIZE (128u * 1024u)
 #define DEFAULT_SAVE_PATH "build/native/pokeemerald-native.sav"
 #define SAVE_FLUSH_FRAMES 60
+#define DISPLAY_FPS 60
+#define MIN_DISPLAY_FPS 6
+#define MAX_INTERNAL_FRAME_SECONDS (1.0 / MIN_DISPLAY_FPS)
 
 #define BUTTON_A      (1u << 0)
 #define BUTTON_B      (1u << 1)
@@ -45,10 +48,16 @@ typedef struct {
     uint32_t mask;
 } UiButton;
 
+typedef enum {
+    SPEED_HALVE,
+    SPEED_RESET,
+    SPEED_DOUBLE,
+} SpeedAction;
+
 typedef struct {
     const char *label;
     Rectangle rect;
-    float speed;
+    SpeedAction action;
 } SpeedButton;
 
 typedef struct {
@@ -327,9 +336,9 @@ static void add_button(UiLayout *layout, const char *label, Rectangle rect, uint
     layout->buttons[layout->buttonCount++] = (UiButton){ label, rect, mask };
 }
 
-static void add_speed_button(UiLayout *layout, const char *label, Rectangle rect, float speed)
+static void add_speed_button(UiLayout *layout, const char *label, Rectangle rect, SpeedAction action)
 {
-    layout->speedButtons[layout->speedButtonCount++] = (SpeedButton){ label, rect, speed };
+    layout->speedButtons[layout->speedButtonCount++] = (SpeedButton){ label, rect, action };
 }
 
 static UiLayout make_layout(void)
@@ -366,11 +375,10 @@ static UiLayout make_layout(void)
     add_button(&layout, "START", (Rectangle){width * 0.5f + 15.0f, y + unit * 2.2f, 95.0f, 34.0f}, BUTTON_START);
 
     const float speedY = y + unit * 0.35f;
-    const float speedX = width * 0.5f - 170.0f;
-    add_speed_button(&layout, "0.5x", (Rectangle){speedX, speedY, 74.0f, 34.0f}, 0.5f);
-    add_speed_button(&layout, "1x", (Rectangle){speedX + 86.0f, speedY, 74.0f, 34.0f}, 1.0f);
-    add_speed_button(&layout, "2x", (Rectangle){speedX + 172.0f, speedY, 74.0f, 34.0f}, 2.0f);
-    add_speed_button(&layout, "4x", (Rectangle){speedX + 258.0f, speedY, 74.0f, 34.0f}, 4.0f);
+    const float speedX = width * 0.5f - 160.0f;
+    add_speed_button(&layout, "0.5x", (Rectangle){speedX, speedY, 96.0f, 34.0f}, SPEED_HALVE);
+    add_speed_button(&layout, "Reset", (Rectangle){speedX + 112.0f, speedY, 84.0f, 34.0f}, SPEED_RESET);
+    add_speed_button(&layout, "2x", (Rectangle){speedX + 212.0f, speedY, 96.0f, 34.0f}, SPEED_DOUBLE);
     return layout;
 }
 
@@ -391,17 +399,28 @@ static void handle_speed_buttons(const UiLayout *layout, float *speed, float *fr
 
     Vector2 mouse = GetMousePosition();
     for (size_t i = 0; i < layout->speedButtonCount; i++) {
-        if (CheckCollisionPointRec(mouse, layout->speedButtons[i].rect)) {
-            *speed = layout->speedButtons[i].speed;
-            *frameAccumulator = 0.0f;
-            return;
+        if (!CheckCollisionPointRec(mouse, layout->speedButtons[i].rect))
+            continue;
+
+        switch (layout->speedButtons[i].action) {
+        case SPEED_HALVE:
+            *speed *= 0.5f;
+            break;
+        case SPEED_RESET:
+            *speed = 1.0f;
+            break;
+        case SPEED_DOUBLE:
+            *speed *= 2.0f;
+            break;
         }
+        *frameAccumulator = 0.0f;
+        return;
     }
 }
 
-static int frames_for_speed(float speed, float *frameAccumulator)
+static int frames_for_speed(float speed, double elapsedSeconds, float *frameAccumulator)
 {
-    *frameAccumulator += speed;
+    *frameAccumulator += speed * (float)elapsedSeconds * DISPLAY_FPS;
     int frames = (int)floorf(*frameAccumulator);
     *frameAccumulator -= frames;
     return frames;
@@ -423,7 +442,7 @@ static void draw_button(const UiButton *button, uint32_t held)
 
 static void draw_speed_button(const SpeedButton *button, float speed)
 {
-    bool active = fabsf(button->speed - speed) < 0.01f;
+    bool active = button->action == SPEED_RESET && fabsf(speed - 1.0f) < 0.01f;
     Color fill = active ? (Color){70, 120, 205, 255} : (Color){44, 49, 64, 255};
     DrawRectangleRounded(button->rect, 0.22f, 12, fill);
     DrawRectangleRoundedLines(button->rect, 0.22f, 12, active ? SKYBLUE : GRAY);
@@ -435,7 +454,7 @@ static void draw_speed_button(const SpeedButton *button, float speed)
              RAYWHITE);
 }
 
-static void draw_ui(Texture2D texture, const UiLayout *layout, uint32_t held, float speed, const char *savePath)
+static void draw_ui(Texture2D texture, const UiLayout *layout, uint32_t held, float speed, int internalFps, int displayFps, const char *savePath)
 {
     BeginDrawing();
     ClearBackground((Color){18, 20, 28, 255});
@@ -447,8 +466,13 @@ static void draw_ui(Texture2D texture, const UiLayout *layout, uint32_t held, fl
                    0.0f,
                    WHITE);
     DrawText("pokeemerald wasm2c native", 20, 8, 20, RAYWHITE);
+    DrawText(TextFormat("Internal FPS: %d   Display FPS: %d", internalFps, displayFps),
+             (int)layout->screen.x,
+             (int)(layout->screen.y + layout->screen.height + 8.0f),
+             18,
+             RAYWHITE);
     DrawText("Keyboard: arrows, Z=A, X=B, Enter=Start, Shift=Select, A=L, S=R", 20, GetScreenHeight() - 28, 18, GRAY);
-    DrawText(TextFormat("Speed: %.1fx", speed), GetScreenWidth() / 2 - 170, (int)(layout->speedButtons[0].rect.y - 24), 18, GRAY);
+    DrawText(TextFormat("Speed: %.3gx", speed), GetScreenWidth() / 2 - 160, (int)(layout->speedButtons[0].rect.y - 24), 18, GRAY);
     DrawText(TextFormat("Save: %s", savePath), 20, GetScreenHeight() - 52, 16, GRAY);
     for (size_t i = 0; i < layout->buttonCount; i++)
         draw_button(&layout->buttons[i], held);
@@ -565,7 +589,7 @@ int main(int argc, char **argv)
 
     InitWindow(960, 720, "pokeemerald wasm2c native");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
-    SetTargetFPS(60);
+    SetTargetFPS(DISPLAY_FPS);
 
     Image image = GenImageColor(DISPLAY_WIDTH, DISPLAY_HEIGHT, BLACK);
     Texture2D texture = LoadTextureFromImage(image);
@@ -575,24 +599,53 @@ int main(int argc, char **argv)
     uint32_t frame = 0;
     float speed = 1.0f;
     float frameAccumulator = 0.0f;
+    double lastFrameTime = GetTime();
+    double lastFpsTime = lastFrameTime;
+    int internalFramesThisSecond = 0;
+    int displayFramesThisSecond = 0;
+    int internalFps = 0;
+    int displayFps = 0;
     while (!WindowShouldClose()) {
+        double frameNow = GetTime();
+        double elapsedSeconds = frameNow - lastFrameTime;
+        lastFrameTime = frameNow;
+
         UiLayout layout = make_layout();
         handle_speed_buttons(&layout, &speed, &frameAccumulator);
         uint32_t held = keyboard_buttons() | ui_buttons(&layout);
-        int framesToRun = frames_for_speed(speed, &frameAccumulator);
+        int framesToRun = frames_for_speed(speed, elapsedSeconds, &frameAccumulator);
         if (frameLimit > 0 && frame + (uint32_t)framesToRun > (uint32_t)frameLimit)
             framesToRun = (int)((uint32_t)frameLimit - frame);
 
-        for (int i = 0; i < framesToRun; i++) {
+        int framesRun = 0;
+        double internalStart = GetTime();
+        while (framesRun < framesToRun) {
             write_keys(&instance, held);
             w2c_0x24pokeemerald0x2Ewasm_WasmRunFrame(&instance);
             frame++;
+            internalFramesThisSecond++;
+            framesRun++;
+            if (framesRun < framesToRun && GetTime() - internalStart >= MAX_INTERNAL_FRAME_SECONDS)
+                break;
         }
+        if (framesRun < framesToRun && frameLimit == 0)
+            frameAccumulator += framesToRun - framesRun;
         w2c_0x24pokeemerald0x2Ewasm_WasmRenderFrame(&instance);
+
+        displayFramesThisSecond++;
+        double now = GetTime();
+        double fpsElapsed = now - lastFpsTime;
+        if (fpsElapsed >= 1.0) {
+            internalFps = (int)round(internalFramesThisSecond / fpsElapsed);
+            displayFps = (int)round(displayFramesThisSecond / fpsElapsed);
+            internalFramesThisSecond = 0;
+            displayFramesThisSecond = 0;
+            lastFpsTime = now;
+        }
 
         uint32_t displayPtr = w2c_0x24pokeemerald0x2Ewasm_WasmDisplayBuffer(&instance);
         UpdateTexture(texture, w2c_0x24pokeemerald0x2Ewasm_memory(&instance)->data + displayPtr);
-        draw_ui(texture, &layout, held, speed, savePath);
+        draw_ui(texture, &layout, held, speed, internalFps, displayFps, savePath);
 
         if (framesToRun > 0 && frame % SAVE_FLUSH_FRAMES == 0)
             lastSaveHash = save_flash_if_changed(&instance, savePath, lastSaveHash, false);
