@@ -305,7 +305,7 @@ static bool8 TextBgPixel(u8 bg, u8 x, u8 y, struct Rgb *color)
     const u16 cnt = ReadU16(REG_BASE + REG_OFFSET_BG0CNT + bg * 2);
     const u32 charBase = VRAM + ((cnt >> 2) & 3) * 0x4000;
     const u32 screenBase = VRAM + ((cnt >> 8) & 31) * 0x800;
-    const bool8 color256 = cnt & 0x80;
+    const bool8 color256 = (cnt & 0x80) != 0;
     const u8 size = (cnt >> 14) & 3;
     const u16 width = size & 1 ? 512 : 256;
     const u16 height = size & 2 ? 512 : 256;
@@ -351,7 +351,7 @@ static bool8 AffineBgPixel(u8 bg, u8 x, u8 y, struct Rgb *color)
     const u32 screenBase = VRAM + ((cnt >> 8) & 31) * 0x800;
     const u16 sizes[] = {128, 256, 512, 1024};
     const u16 size = sizes[(cnt >> 14) & 3];
-    const bool8 wrap = cnt & 0x2000;
+    const bool8 wrap = (cnt & 0x2000) != 0;
     const u8 reg = bg == 2 ? REG_OFFSET_BG2PA : REG_OFFSET_BG3PA;
     const s16 pa = Signed16(ReadU16(REG_BASE + reg));
     const s16 pb = Signed16(ReadU16(REG_BASE + reg + 2));
@@ -492,7 +492,7 @@ static void RenderSprites(u16 dispcnt, s8 priority)
         const bool8 affine = affineMode & 1;
         const u8 shape = (a0 >> 14) & 3;
         const u8 spritePriority = (a2 >> 10) & 3;
-        const bool8 color256 = a0 & 0x2000;
+        const bool8 color256 = (a0 & 0x2000) != 0;
         const u8 palette = (a2 >> 12) & 15;
         const u16 tileBase = a2 & 0x3ff;
         u8 w;
