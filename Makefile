@@ -20,7 +20,7 @@ WASM_LD ?= $(shell { command -v wasm-ld || find "$$HOME/.rustup/toolchains" -pat
 WASM2C ?= $(shell { command -v wasm2c || { test -x /opt/homebrew/opt/wabt/bin/wasm2c && echo /opt/homebrew/opt/wabt/bin/wasm2c; } || { test -x /usr/local/opt/wabt/bin/wasm2c && echo /usr/local/opt/wabt/bin/wasm2c; }; } 2>/dev/null)
 WABT_PREFIX ?= $(shell if [ -n "$(WASM2C)" ]; then dirname "$$(dirname "$(WASM2C)")"; else brew --prefix wabt 2>/dev/null || true; fi)
 NATIVE_CC ?= $(shell { command -v clang || command -v cc; })
-NATIVE_CFLAGS ?= -O0 -g
+NATIVE_CFLAGS ?= -O2 -DNDEBUG
 RAYLIB_CFLAGS ?= $(shell pkg-config --cflags raylib 2>/dev/null)
 RAYLIB_LIBS ?= $(shell pkg-config --libs raylib 2>/dev/null)
 
@@ -288,16 +288,16 @@ $(NATIVE_WASM2C_C): $(WASM)
 $(NATIVE_WASM2C_H): $(NATIVE_WASM2C_C)
 	@:
 
-$(NATIVE_WASM2C_O): $(NATIVE_WASM2C_C) $(NATIVE_WASM2C_H)
+$(NATIVE_WASM2C_O): $(NATIVE_WASM2C_C) $(NATIVE_WASM2C_H) Makefile
 	@test -f "$(WABT_PREFIX)/lib/libwasm-rt-impl.a" || { echo "wabt wasm-rt library not found under $(WABT_PREFIX); set WABT_PREFIX=/path/to/wabt"; exit 1; }
 	$(NATIVE_CC) $(NATIVE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(WABT_PREFIX)/include -Wno-unused-function -Wno-parentheses-equality -c $< -o $@
 
-$(NATIVE_RAYLIB_O): tools/wasm_native_raylib.c $(NATIVE_WASM2C_H)
+$(NATIVE_RAYLIB_O): tools/wasm_native_raylib.c $(NATIVE_WASM2C_H) Makefile
 	@test -n "$(RAYLIB_LIBS)" || { echo "raylib pkg-config metadata not found; install raylib or set RAYLIB_CFLAGS/RAYLIB_LIBS"; exit 1; }
 	$(NATIVE_CC) $(NATIVE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(WABT_PREFIX)/include $(RAYLIB_CFLAGS) -c $< -o $@
 
-$(NATIVE_RAYLIB): $(NATIVE_WASM2C_O) $(NATIVE_RAYLIB_O)
-	$(NATIVE_CC) $(NATIVE_CFLAGS) -o $@ $^ $(WABT_PREFIX)/lib/libwasm-rt-impl.a $(RAYLIB_LIBS) -lm
+$(NATIVE_RAYLIB): $(NATIVE_WASM2C_O) $(NATIVE_RAYLIB_O) Makefile
+	$(NATIVE_CC) $(NATIVE_CFLAGS) -o $@ $(NATIVE_WASM2C_O) $(NATIVE_RAYLIB_O) $(WABT_PREFIX)/lib/libwasm-rt-impl.a $(RAYLIB_LIBS) -lm
 
 $(WASM_OBJ_DIR)/%.o: $(C_SUBDIR)/%.c
 	@mkdir -p $(dir $@)

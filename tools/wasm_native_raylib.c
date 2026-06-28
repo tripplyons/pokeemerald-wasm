@@ -567,12 +567,15 @@ int main(int argc, char **argv)
 {
     const char *savePath = DEFAULT_SAVE_PATH;
     int frameLimit = 0;
+    float initialSpeed = 1.0f;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) {
             savePath = argv[++i];
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             frameLimit = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--speed") == 0 && i + 1 < argc) {
+            initialSpeed = strtof(argv[++i], NULL);
         }
     }
 
@@ -597,7 +600,7 @@ int main(int argc, char **argv)
     SetTextureFilter(texture, TEXTURE_FILTER_POINT);
 
     uint32_t frame = 0;
-    float speed = 1.0f;
+    float speed = initialSpeed > 0.0f ? initialSpeed : 1.0f;
     float frameAccumulator = 0.0f;
     double lastFrameTime = GetTime();
     double lastFpsTime = lastFrameTime;
@@ -619,13 +622,14 @@ int main(int argc, char **argv)
 
         int framesRun = 0;
         double internalStart = GetTime();
-        while (framesRun < framesToRun) {
+        if (framesToRun > 0)
             write_keys(&instance, held);
+        while (framesRun < framesToRun) {
             w2c_0x24pokeemerald0x2Ewasm_WasmRunFrame(&instance);
             frame++;
             internalFramesThisSecond++;
             framesRun++;
-            if (framesRun < framesToRun && GetTime() - internalStart >= MAX_INTERNAL_FRAME_SECONDS)
+            if (framesRun < framesToRun && (framesRun & 15) == 0 && GetTime() - internalStart >= MAX_INTERNAL_FRAME_SECONDS)
                 break;
         }
         if (framesRun < framesToRun && frameLimit == 0)
