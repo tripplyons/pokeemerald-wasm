@@ -124,6 +124,7 @@ h1 {
   grid-area: display;
   width: min(100%, 62dvh);
   min-height: 0;
+  aspect-ratio: 3 / 2;
   padding: clamp(6px, 1.2vmin, 14px);
   justify-self: center;
   display: grid;
@@ -139,9 +140,12 @@ h1 {
 
 #screen {
   width: 100%;
+  max-width: 100%;
   height: auto;
+  max-height: 100%;
   aspect-ratio: 3 / 2;
   display: block;
+  object-fit: contain;
   image-rendering: pixelated;
   border-radius: clamp(8px, 1.6vmin, 18px);
   background: #f8f8f8;
@@ -372,14 +376,14 @@ button.active {
 
   .display-panel {
     width: 100%;
-    height: 100%;
-    align-self: stretch;
+    height: auto;
+    max-height: 100%;
+    align-self: center;
   }
 
   #screen {
-    width: auto;
-    max-width: 100%;
-    height: 100%;
+    width: 100%;
+    height: auto;
   }
 
   .controls {
