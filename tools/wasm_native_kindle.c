@@ -338,8 +338,29 @@ struct mxcfb_update_data {
 #define MXCFB_SEND_UPDATE _IOW('F', 0x2E, struct mxcfb_update_data)
 #endif
 
+struct hwtcon_rect {
+    uint32_t top;
+    uint32_t left;
+    uint32_t width;
+    uint32_t height;
+};
+
+struct hwtcon_update_data {
+    struct hwtcon_rect update_region;
+    uint32_t waveform_mode;
+    uint32_t update_mode;
+    uint32_t update_marker;
+    unsigned int flags;
+    int dither_mode;
+};
+
+#define HWTCON_SEND_UPDATE 1076119086
+
 #ifndef WAVEFORM_MODE_AUTO
 #define WAVEFORM_MODE_AUTO 257u
+#endif
+#ifndef HWTCON_WAVEFORM_MODE_AUTO
+#define HWTCON_WAVEFORM_MODE_AUTO 257u
 #endif
 #ifndef UPDATE_MODE_PARTIAL
 #define UPDATE_MODE_PARTIAL 0u
@@ -380,6 +401,7 @@ typedef struct {
     int height;
     int bytesPerPixel;
     bool warnedRefresh;
+    bool useHwtcon;
 } Framebuffer;
 
 typedef struct {
@@ -438,6 +460,7 @@ static bool open_framebuffer(Framebuffer *fb, const char *path)
     fb->width = (int)fb->var.xres;
     fb->height = (int)fb->var.yres;
     fb->bytesPerPixel = (int)((fb->var.bits_per_pixel + 7) / 8);
+    fb->useHwtcon = strstr(fb->fix.id, "hwtcon") != NULL;
     fb->size = fb->fix.smem_len;
     fb->data = mmap(NULL, fb->size, PROT_READ | PROT_WRITE, MAP_SHARED, fb->fd, 0);
     if (fb->data == MAP_FAILED) {
@@ -457,7 +480,25 @@ static void close_framebuffer(Framebuffer *fb)
         close(fb->fd);
 }
 
-static void refresh_framebuffer(Framebuffer *fb, RectI region, bool full)
+static bool refresh_hwtcon(Framebuffer *fb, RectI region, bool full, int *error)
+{
+    struct hwtcon_update_data update;
+    memset(&update, 0, sizeof(update));
+    update.update_region.left = (uint32_t)region.x;
+    update.update_region.top = (uint32_t)region.y;
+    update.update_region.width = (uint32_t)region.width;
+    update.update_region.height = (uint32_t)region.height;
+    update.waveform_mode = HWTCON_WAVEFORM_MODE_AUTO;
+    update.update_mode = full ? UPDATE_MODE_FULL : UPDATE_MODE_PARTIAL;
+
+    if (ioctl(fb->fd, HWTCON_SEND_UPDATE, &update) == 0)
+        return true;
+
+    *error = errno;
+    return false;
+}
+
+static bool refresh_mxcfb(Framebuffer *fb, RectI region, bool full, int *error)
 {
     struct mxcfb_update_data update;
     memset(&update, 0, sizeof(update));
@@ -469,8 +510,43 @@ static void refresh_framebuffer(Framebuffer *fb, RectI region, bool full)
     update.update_mode = full ? UPDATE_MODE_FULL : UPDATE_MODE_PARTIAL;
     update.temp = TEMP_USE_AMBIENT;
 
-    if (ioctl(fb->fd, MXCFB_SEND_UPDATE, &update) < 0 && !fb->warnedRefresh) {
-        fprintf(stderr, "warning: MXCFB_SEND_UPDATE failed: %s; framebuffer writes may still be visible if auto-refresh is active\n", strerror(errno));
+    if (ioctl(fb->fd, MXCFB_SEND_UPDATE, &update) == 0)
+        return true;
+
+    *error = errno;
+    return false;
+}
+
+static bool refresh_eips(Framebuffer *fb, bool full)
+{
+    char command[160];
+    snprintf(command,
+             sizeof(command),
+             "/usr/sbin/eips -s w=%d,h=%d %s >/dev/null 2>&1",
+             fb->width,
+             fb->height,
+             full ? "-f" : "");
+    return system(command) == 0;
+}
+
+static void refresh_framebuffer(Framebuffer *fb, RectI region, bool full)
+{
+    int hwtconError = 0;
+    int mxcfbError = 0;
+
+    if (fb->useHwtcon) {
+        if (refresh_hwtcon(fb, region, full, &hwtconError) || refresh_eips(fb, full))
+            return;
+    } else {
+        if (refresh_mxcfb(fb, region, full, &mxcfbError) || refresh_eips(fb, full))
+            return;
+    }
+
+    if (!fb->warnedRefresh) {
+        fprintf(stderr,
+                "warning: e-ink refresh failed: HWTCON=%s, MXCFB=%s; framebuffer writes may still be visible if auto-refresh is active\n",
+                hwtconError ? strerror(hwtconError) : "not used",
+                mxcfbError ? strerror(mxcfbError) : "not used");
         fb->warnedRefresh = true;
     }
 }

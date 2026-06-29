@@ -94,6 +94,8 @@ NATIVE_WASM2C_O := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.o
 NATIVE_RAYLIB_O := $(NATIVE_BUILD_DIR)/wasm_native_raylib.o
 NATIVE_RAYLIB := $(NATIVE_BUILD_DIR)/pokeemerald-native
 KINDLE_WASM2C_O := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.kindle.o
+KINDLE_WASM_RT_O := $(NATIVE_BUILD_DIR)/wasm-rt-impl.kindle.o
+KINDLE_WASM_RT_MEM_O := $(NATIVE_BUILD_DIR)/wasm-rt-mem-impl.kindle.o
 KINDLE_FRONTEND_O := $(NATIVE_BUILD_DIR)/wasm_native_kindle.o
 NATIVE_KINDLE := $(NATIVE_BUILD_DIR)/pokeemerald-kindle
 ASSETS_DIR_NAME := $(BUILD_DIR)/assets
@@ -308,14 +310,19 @@ $(NATIVE_RAYLIB): $(NATIVE_WASM2C_O) $(NATIVE_RAYLIB_O) Makefile
 	$(NATIVE_CC) $(NATIVE_CFLAGS) -o $@ $(NATIVE_WASM2C_O) $(NATIVE_RAYLIB_O) $(WABT_PREFIX)/lib/libwasm-rt-impl.a $(RAYLIB_LIBS) -lm
 
 $(KINDLE_WASM2C_O): $(NATIVE_WASM2C_C) $(NATIVE_WASM2C_H) Makefile
-	@test -f "$(KINDLE_WABT_PREFIX)/lib/libwasm-rt-impl.a" || { echo "wabt wasm-rt library not found under $(KINDLE_WABT_PREFIX); set KINDLE_WABT_PREFIX=/path/to/target/wabt"; exit 1; }
 	$(KINDLE_CC) $(KINDLE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(KINDLE_WABT_PREFIX)/include -Wno-unused-function -Wno-parentheses-equality -c $< -o $@
+
+$(KINDLE_WASM_RT_O): $(KINDLE_WABT_PREFIX)/share/wabt/wasm2c/wasm-rt-impl.c Makefile
+	$(KINDLE_CC) $(KINDLE_CFLAGS) -I $(KINDLE_WABT_PREFIX)/include -I $(KINDLE_WABT_PREFIX)/share/wabt/wasm2c -c $< -o $@
+
+$(KINDLE_WASM_RT_MEM_O): $(KINDLE_WABT_PREFIX)/share/wabt/wasm2c/wasm-rt-mem-impl.c Makefile
+	$(KINDLE_CC) $(KINDLE_CFLAGS) -I $(KINDLE_WABT_PREFIX)/include -I $(KINDLE_WABT_PREFIX)/share/wabt/wasm2c -c $< -o $@
 
 $(KINDLE_FRONTEND_O): tools/wasm_native_kindle.c $(NATIVE_WASM2C_H) Makefile
 	$(KINDLE_CC) $(KINDLE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(KINDLE_WABT_PREFIX)/include -c $< -o $@
 
-$(NATIVE_KINDLE): $(KINDLE_WASM2C_O) $(KINDLE_FRONTEND_O) Makefile
-	$(KINDLE_CC) $(KINDLE_CFLAGS) -o $@ $(KINDLE_WASM2C_O) $(KINDLE_FRONTEND_O) $(KINDLE_WABT_PREFIX)/lib/libwasm-rt-impl.a -lm
+$(NATIVE_KINDLE): $(KINDLE_WASM2C_O) $(KINDLE_WASM_RT_O) $(KINDLE_WASM_RT_MEM_O) $(KINDLE_FRONTEND_O) Makefile
+	$(KINDLE_CC) $(KINDLE_CFLAGS) -o $@ $(KINDLE_WASM2C_O) $(KINDLE_WASM_RT_O) $(KINDLE_WASM_RT_MEM_O) $(KINDLE_FRONTEND_O) -lm
 
 $(WASM_OBJ_DIR)/%.o: $(C_SUBDIR)/%.c
 	@mkdir -p $(dir $@)

@@ -10,8 +10,8 @@ Play it at [pokeemerald.com](https://pokeemerald.com).
 
 ## Kindle Scribe frontend
 
-`make native-kindle` builds `build/native/pokeemerald-kindle`, a Linux framebuffer frontend intended for jailbroken Kindle Scribe devices. It uses the same wasm2c game core, writes grayscale frames directly to `/dev/fb0`, reads touch/keyboard events from `/dev/input/event*`, draws on-screen GBA controls, sends Kindle MXCFB e-ink refresh ioctls when available, and stores flash saves in `build/native/pokeemerald-kindle.sav`.
+`make native-kindle` builds `build/native/pokeemerald-kindle`, a Linux framebuffer frontend intended for jailbroken Kindle Scribe devices. It uses the same wasm2c game core, writes grayscale frames directly to `/dev/fb0`, reads touch/keyboard events from `/dev/input/event*`, draws on-screen GBA controls, refreshes e-ink through HWTCON/MXCFB or `eips` when available, and stores flash saves in `build/native/pokeemerald-kindle.sav`.
 
-For real Scribe deployment, cross-compile with a Kindle-compatible Linux toolchain and target WABT runtime, for example by overriding `KINDLE_CC`, `KINDLE_CFLAGS`, and `KINDLE_WABT_PREFIX`. Runtime options include `--fb /dev/fb0`, `--input /dev/input/eventN`, `--display-fps 4`, `--save path`, and `--frames N`.
+For real Scribe deployment, cross-compile with a Kindle-compatible Linux toolchain, for example `make native-kindle KINDLE_CC='zig cc' KINDLE_CFLAGS='-target arm-linux-musleabihf -O2 -DNDEBUG -static'`. The Kindle target compiles WABT's `wasm-rt` sources for the selected target instead of linking the host WABT library. Runtime options include `--fb /dev/fb0`, `--input /dev/input/eventN`, `--display-fps 4`, `--save path`, and `--frames N`.
 
 The original pokeemerald README has been preserved at [docs/original-pokeemerald-readme.md](docs/original-pokeemerald-readme.md).
