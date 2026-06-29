@@ -1,0 +1,9 @@
+{
+  "items": [
+    {
+      "name": "Pokemon Emerald",
+      "priority": 3,
+      "action": "bin/start.sh"
+    }
+  ]
+}

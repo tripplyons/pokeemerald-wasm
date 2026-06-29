@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extension>
+  <information>
+    <name>Pokemon Emerald</name>
+    <version>0.1.0</version>
+    <author>Tripp</author>
+    <id>pokeemerald</id>
+  </information>
+  <menus>
+    <menu type="json">menu.json</menu>
+  </menus>
+</extension>
