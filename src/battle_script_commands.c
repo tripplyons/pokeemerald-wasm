@@ -9979,19 +9979,26 @@ static void Cmd_handleballthrow(void)
                 break;
             }
         }
-        else
+        else if (gLastUsedItem != ITEM_MASTER_BALL)
         {
             ballMultiplier = sBallCatchBonuses[gLastUsedItem - ITEM_ULTRA_BALL];
         }
 
-        odds = (catchRate * ballMultiplier / 10)
-            * (gBattleMons[gBattlerTarget].maxHP * 3 - gBattleMons[gBattlerTarget].hp * 2)
-            / (3 * gBattleMons[gBattlerTarget].maxHP);
+        if (gLastUsedItem == ITEM_MASTER_BALL)
+        {
+            odds = 255;
+        }
+        else
+        {
+            odds = (catchRate * ballMultiplier / 10)
+                * (gBattleMons[gBattlerTarget].maxHP * 3 - gBattleMons[gBattlerTarget].hp * 2)
+                / (3 * gBattleMons[gBattlerTarget].maxHP);
 
-        if (gBattleMons[gBattlerTarget].status1 & (STATUS1_SLEEP | STATUS1_FREEZE))
-            odds *= 2;
-        if (gBattleMons[gBattlerTarget].status1 & (STATUS1_POISON | STATUS1_BURN | STATUS1_PARALYSIS | STATUS1_TOXIC_POISON))
-            odds = (odds * 15) / 10;
+            if (gBattleMons[gBattlerTarget].status1 & (STATUS1_SLEEP | STATUS1_FREEZE))
+                odds *= 2;
+            if (gBattleMons[gBattlerTarget].status1 & (STATUS1_POISON | STATUS1_BURN | STATUS1_PARALYSIS | STATUS1_TOXIC_POISON))
+                odds = (odds * 15) / 10;
+        }
 
         if (gLastUsedItem != ITEM_SAFARI_BALL)
         {
