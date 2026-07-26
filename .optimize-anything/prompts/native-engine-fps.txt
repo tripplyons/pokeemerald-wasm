@@ -1,0 +1,14 @@
+## Current Strategy
+Start with a narrow, correctness-preserving optimization of the wasm2c desktop execution path. Inspect the allowlisted code and compile configuration, then make one coherent change. Prefer code-generation improvements that affect the large generated wasm2c module without changing arithmetic semantics; keep host-shim edits exact and bounded.
+
+## Known Failures
+No official trials yet. The protected baseline is about 700k mean engine FPS. Rendering is deliberately outside timing, so optimizing raylib or WasmRenderFrame will not help. Fast-math, benchmark edits, skipped frames, fake hashes, and broad gameplay rewrites violate the contract.
+
+## Next Hypothesis
+The baseline `-O2` native code generation leaves safe throughput available in the generated wasm2c C. A carefully chosen higher optimization level and host-appropriate code-generation/link settings may improve all three scenarios before any invasive shim rewrite is justified.
+
+## Expected Effect
+A measurable broad FPS increase across overworld, menu, and battle while all six hashes remain exact and both passes remain deterministic. Compile/link should still complete within the evaluator timeout and `native-raylib` should remain buildable.
+
+## Falsification Signal
+Official score is flat or lower, build time exceeds the limit, the compiler rejects the flags, any scenario regresses materially, or any correctness/determinism gate fails.

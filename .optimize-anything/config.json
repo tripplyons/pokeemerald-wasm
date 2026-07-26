@@ -1,0 +1,20 @@
+{
+  "version": 3,
+  "pythonDependencies": [
+    "gepa[full] @ git+https://github.com/gepa-ai/gepa.git@f919db0a622e2e9f9204779b81fe00cc1b2d808f"
+  ],
+  "profiles": {
+    "native-engine-fps": {
+      "task": ".optimize-anything/tasks/native-engine-fps.py",
+      "engine": "pi_prompt",
+      "maxEvals": 8,
+      "maxConcurrency": 2,
+      "sandbox": false,
+      "engineConfig": {},
+      "maxRolloutMinutes": 75,
+      "benchmarkTimeoutMinutes": 20,
+      "maxEvaluationsWithoutImprovement": 3,
+      "solverThinkingLevel": "high"
+    }
+  }
+}
