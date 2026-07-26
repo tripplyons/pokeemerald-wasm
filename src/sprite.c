@@ -351,6 +351,8 @@ void BuildOamBuffer(void)
 }
 
 static u32 sSortKey[MAX_SPRITES];
+static u32 sPrevSortKey[MAX_SPRITES];
+static bool8 sSortDirty;
 
 static s16 CalcSpriteSortY(const struct Sprite *sprite)
 {
@@ -373,6 +375,7 @@ static s16 CalcSpriteSortY(const struct Sprite *sprite)
 void UpdateOamCoords(void)
 {
     u8 i;
+    sSortDirty = FALSE;
     for (i = 0; i < MAX_SPRITES; i++)
     {
         struct Sprite *sprite = &gSprites[i];
@@ -391,8 +394,12 @@ void UpdateOamCoords(void)
         }
         {
             u16 priority = sprite->subpriority | (sprite->oam.priority << 8);
+            u32 key = ((u32)priority << 16) | (u16)(32768 - CalcSpriteSortY(sprite));
             sSpritePriorities[i] = priority;
-            sSortKey[i] = ((u32)priority << 16) | (u16)(32768 - CalcSpriteSortY(sprite));
+            if (key != sPrevSortKey[i])
+                sSortDirty = TRUE;
+            sPrevSortKey[i] = key;
+            sSortKey[i] = key;
         }
     }
 }
@@ -404,6 +411,8 @@ void BuildSpritePriorities(void)
 void SortSprites(void)
 {
     u8 i;
+    if (!sSortDirty)
+        return;
     for (i = 1; i < MAX_SPRITES; i++)
     {
         u8 j = i;

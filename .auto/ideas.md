@@ -53,3 +53,23 @@ about equivalence, prefer the smaller, obviously-equal transform.
       sAffineAnimCmdFuncs (AffineAnimCmd_end was ~4% alone!).
 - NEGATIVE: hand-inlining AddSpritesToOamBuffer's AddSpriteToOamBuffer call HURT (-5.1%) —
       it blocked AddSubspritesToOamBuffer inlining / worsened layout. Don't hand-inline there.
+
+## EXHAUSTION ASSESSMENT (after iteration 5)
+Cumulative verified wins (~+22% over original 2.01M baseline):
+  1. SortSprites adjusted-Y precompute (+2.6%, A/B verified)
+  2. 3-way pre-sort pass fusion + packed-u32 sort key (+8.9%, A/B verified, zero overlap)
+  3. AnimateSprites indirect-dispatch -> direct calls (+8.8%, two impls agree)
+NEGATIVE / NOISE results (do NOT retry):
+  - Command-interpreter dispatch (sAnimCmdFuncs/sAffineAnimCmdFuncs) -> switch: NOISE (cmd
+    interpreters fire rarely, delay-gated; anim switch even hurt).
+  - Hand-inlining AddSpritesToOamBuffer's AddSpriteToOamBuffer call: HURT -5.1%.
+  - __attribute__((flatten)) on hot fns: HURT -5..-7% (icache / defeats wasm optimizer).
+UNSAFE (do NOT do without broad changes — would overfit benchmark):
+  - AffineAnimCmd_end redundant-recompute skip: gOamMatrices has scattered DIRECT writers in
+    pokemon_animation.c, battle_anim_{mons,flying,electric}.c, roulette.c. A dirty-flag would
+    need all those sites; missing one = silent general-correctness bug not caught by benchmark.
+REMAINING (last safe structural idea, marginal ~+1-2%):
+  - Sort-skip-when-unchanged: cache prev sSortKey[64]; if identical, sSpriteOrder is already
+    sorted (persists across frames) -> skip insertion sort. Detect change inside the fused
+    pre-sort pass (no extra pass). Safe. Likely near noise floor.
+BuildOamBuffer (~46%) is now mostly necessary OAM-emission work; resistant to safe opts.
