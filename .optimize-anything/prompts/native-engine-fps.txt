@@ -1,14 +1,14 @@
 ## Current Strategy
-Treat compiler flags as independent variables and isolate one change per official evaluation. Retain the correctness-proven generated wasm2c build and avoid host-shim rewrites until code-generation behavior is understood. Optimize for the aggregate, with special attention to menu because it showed the largest regression under `-O3`.
+Retain the evidence-backed `-O2` optimization level and reproduce the best isolated native flag combination before exploring a new axis. Keep generated wasm2c source, WASM flags, linker flags, and host shims unchanged so the result remains attributable.
 
 ## Known Failures
-An initial run tested `-O3 -DNDEBUG -mcpu=native -fomit-frame-pointer` and scored 698,743 FPS with exact hashes, about 1.4% below its 708,820 preflight; menu regressed most. A follow-up `-O2 -mcpu=native -fomit-frame-pointer` trial scored 712,300 with exact hashes, but the workspace commit was lost to a now-fixed parallel-build cleanup race. Rendering is outside timing, so optimizing raylib or WasmRenderFrame will not help. Fast-math, benchmark edits, skipped frames, fake hashes, and broad gameplay rewrites violate the contract.
+`-O3 -mcpu=native -fomit-frame-pointer` scored 698,743 and regressed menu. `-O2 -mcpu=native -fomit-frame-pointer` later scored 704,608. Removing only frame-pointer omission fell to 694,697, so omission is a retained strength. Removing only `-mcpu=native` while retaining omission reached 713,622 (overworld 558,395, menu 864,915, battle 717,556) with exact hashes, but the workspace commit was lost to a now-fixed ignored-build cleanup race. Rendering is outside timing; fast-math, benchmark edits, skipped frames, fake hashes, and broad gameplay rewrites violate the contract.
 
 ## Next Hypothesis
-Reproduce the promising isolated configuration by changing only native flags from baseline to `-O2 -DNDEBUG -mcpu=native -fomit-frame-pointer`. The generated wasm2c translation is large and branch/cache heavy, so `-O2` should preserve instruction-cache locality while native CPU targeting and frame-pointer omission provide low-level gains. Do not add LTO, fast-math, WASM flag changes, or host-shim changes in this trial.
+Reproduce the best observed configuration by changing only native flags from baseline to `-O2 -DNDEBUG -fomit-frame-pointer` (no `-mcpu=native`). Generic arm64 code appears to preserve better instruction layout for this large scalar wasm2c translation, while omitting the frame pointer frees a register. Do not add LTO, fast-math, WASM changes, or source edits in this trial.
 
 ## Expected Effect
-Reproduce or exceed the prior 712,300 result, with improved aggregate FPS versus the fresh preflight, exact hashes, deterministic passes, and a buildable `native-raylib` target.
+Reproduce or exceed the prior 713,622 result, with exact hashes, deterministic passes, and a buildable `native-raylib` target. The wrapper should now clean isolated build outputs before the harness commits the workspace.
 
 ## Falsification Signal
-The official aggregate fails to improve over fresh preflight/noise, menu remains materially below baseline, build fails, or any correctness/determinism gate changes.
+The official aggregate fails to improve over fresh preflight/noise, menu is materially below ~865k, cleanup still blocks the kept commit, build fails, or any correctness/determinism gate changes.

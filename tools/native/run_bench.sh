@@ -11,6 +11,22 @@ GOLDEN=tools/native/bench_golden.json
 SCRIPT=tools/wasm_replays/mudkip_starter.txt
 BENCH=build/native/pokeemerald-bench
 
+cleanup_isolated_build()
+{
+  case "$PWD" in
+    */.optimize-anything/runs/*/worktree)
+      chmod -R u+w build >/dev/null 2>&1 || true
+      rm -rf build >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+
+# The optimizer commits or resets immediately after this command exits.
+# Remove ignored build outputs before handing control back so Git does
+# not race thousands of generated asset files. Keep normal local runs
+# incremental by cleaning only Optimize Anything worktrees.
+trap cleanup_isolated_build 0
+
 if [ ! -f "$GOLDEN" ] || [ ! -f "$SCRIPT" ]; then
   printf '{"score": 0, "info": {"error": "missing golden hashes or replay script"}}\n'
   exit 0
