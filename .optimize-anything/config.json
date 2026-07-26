@@ -16,7 +16,6 @@
           "reflection_lm": "openai-codex/gpt-5.6-sol"
         }
       },
-      "maxTokenCost": 5,
       "maxIterationsWithoutImprovement": 6
     },
     "native-engine-fps-4": {
@@ -30,9 +29,18 @@
           "reflection_lm": "openai-codex/gpt-5.6-sol"
         }
       },
+      "maxIterationsWithoutImprovement": 6
+    },
+    "native-engine-fps-5": {
+      "task": ".optimize-anything/tasks/native-engine-fps-5.py",
+      "artifactMode": "code",
+      "maxEvals": 12,
+      "maxConcurrency": 1,
+      "worktreeIsolation": true,
+      "engineConfig": {},
       "maxIterationsWithoutImprovement": 6,
-      "maxTokenCost": 5,
-      "stopAtScore": 2150000
+      "expectedBaselineMin": 1800000,
+      "expectedBaselineMax": 2300000
     }
   }
 }
