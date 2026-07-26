@@ -1,20 +1,24 @@
 {
-  "version": 3,
+  "version": 4,
   "pythonDependencies": [
     "gepa[full] @ git+https://github.com/gepa-ai/gepa.git@f919db0a622e2e9f9204779b81fe00cc1b2d808f"
   ],
   "profiles": {
-    "native-engine-fps": {
-      "task": ".optimize-anything/tasks/native-engine-fps.py",
-      "engine": "pi_prompt",
-      "maxEvals": 8,
-      "maxConcurrency": 2,
-      "sandbox": false,
-      "engineConfig": {},
-      "maxRolloutMinutes": 75,
-      "benchmarkTimeoutMinutes": 20,
-      "maxEvaluationsWithoutImprovement": 3,
-      "solverThinkingLevel": "high"
+    "native-engine-fps-3": {
+      "task": ".optimize-anything/tasks/native-engine-fps-3.py",
+      "maxEvals": 20,
+      "maxConcurrency": 1,
+      "sandbox": true,
+      "engineConfig": {
+        "reflection": {
+          "reflection_lm": "openai/gpt-5.1"
+        },
+        "refiner": {
+          "max_refinements": 1
+        }
+      },
+      "maxIterationsWithoutImprovement": 6,
+      "maxTokenCost": 5
     }
   }
 }
