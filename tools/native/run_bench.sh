@@ -22,7 +22,10 @@ if command -v ccache >/dev/null 2>&1 && command -v clang >/dev/null 2>&1; then
 fi
 
 BUILD_LOG=$(mktemp /tmp/native_bench_build.XXXXXX.log)
-if ! make -j8 NATIVE_CC="$NATIVE_CC" native-bench >"$BUILD_LOG" 2>&1; then
+# Use a serial build. Parallel asset prerequisites can outlive make's
+# top-level process in isolated worktrees, racing the optimizer's cleanup
+# and causing a valid improvement to be discarded.
+if ! make NATIVE_CC="$NATIVE_CC" native-bench >"$BUILD_LOG" 2>&1; then
   python3 - "$BUILD_LOG" <<'PYEOF'
 import json, sys
 with open(sys.argv[1], errors="replace") as f:

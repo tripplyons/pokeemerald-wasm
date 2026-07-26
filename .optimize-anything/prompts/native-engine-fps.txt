@@ -1,14 +1,14 @@
 ## Current Strategy
-Start with a narrow, correctness-preserving optimization of the wasm2c desktop execution path. Inspect the allowlisted code and compile configuration, then make one coherent change. Prefer code-generation improvements that affect the large generated wasm2c module without changing arithmetic semantics; keep host-shim edits exact and bounded.
+Treat compiler flags as independent variables and isolate one change per official evaluation. Retain the correctness-proven generated wasm2c build and avoid host-shim rewrites until code-generation behavior is understood. Optimize for the aggregate, with special attention to menu because it showed the largest regression under `-O3`.
 
 ## Known Failures
-No official trials yet. The protected baseline is about 700k mean engine FPS. Rendering is deliberately outside timing, so optimizing raylib or WasmRenderFrame will not help. Fast-math, benchmark edits, skipped frames, fake hashes, and broad gameplay rewrites violate the contract.
+An initial run tested `-O3 -DNDEBUG -mcpu=native -fomit-frame-pointer` and scored 698,743 FPS with exact hashes, about 1.4% below its 708,820 preflight; menu regressed most. A follow-up `-O2 -mcpu=native -fomit-frame-pointer` trial scored 712,300 with exact hashes, but the workspace commit was lost to a now-fixed parallel-build cleanup race. Rendering is outside timing, so optimizing raylib or WasmRenderFrame will not help. Fast-math, benchmark edits, skipped frames, fake hashes, and broad gameplay rewrites violate the contract.
 
 ## Next Hypothesis
-The baseline `-O2` native code generation leaves safe throughput available in the generated wasm2c C. A carefully chosen higher optimization level and host-appropriate code-generation/link settings may improve all three scenarios before any invasive shim rewrite is justified.
+Reproduce the promising isolated configuration by changing only native flags from baseline to `-O2 -DNDEBUG -mcpu=native -fomit-frame-pointer`. The generated wasm2c translation is large and branch/cache heavy, so `-O2` should preserve instruction-cache locality while native CPU targeting and frame-pointer omission provide low-level gains. Do not add LTO, fast-math, WASM flag changes, or host-shim changes in this trial.
 
 ## Expected Effect
-A measurable broad FPS increase across overworld, menu, and battle while all six hashes remain exact and both passes remain deterministic. Compile/link should still complete within the evaluator timeout and `native-raylib` should remain buildable.
+Reproduce or exceed the prior 712,300 result, with improved aggregate FPS versus the fresh preflight, exact hashes, deterministic passes, and a buildable `native-raylib` target.
 
 ## Falsification Signal
-Official score is flat or lower, build time exceeds the limit, the compiler rejects the flags, any scenario regresses materially, or any correctness/determinism gate fails.
+The official aggregate fails to improve over fresh preflight/noise, menu remains materially below baseline, build fails, or any correctness/determinism gate changes.
