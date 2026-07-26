@@ -43,3 +43,13 @@ about equivalence, prefer the smaller, obviously-equal transform.
 - Next candidates: AnimateSprites is a separate gSprites pass but in a different phase (CB1)
       than BuildOamBuffer (VBlank) — cannot fuse across phases. Within BuildOamBuffer the
       pre-sort fusion is captured; AddSpritesToOamBuffer runs post-sort (sorted order).
+
+## PROVEN BIG WIN — indirect-dispatch elimination (iteration 3, +8.8%)
+- [x] AnimateSprites/AnimateSprite dispatched through sAnimFuncs/sAffineAnimFuncs function-pointer
+      tables, blocking inlining of ContinueAnim/ContinueAffineAnim. Replacing with direct calls
+      (branch on animBeginning/affineAnimBeginning) + hoisting gAffineAnimsDisabled = +8.8%.
+- KEY INSIGHT: function-pointer dispatch tables in hot loops block inlining; specialize the
+      common case with direct calls. Look for more: sAnimCmdFuncs (anim command interpreter),
+      sAffineAnimCmdFuncs (AffineAnimCmd_end was ~4% alone!).
+- NEGATIVE: hand-inlining AddSpritesToOamBuffer's AddSpriteToOamBuffer call HURT (-5.1%) —
+      it blocked AddSubspritesToOamBuffer inlining / worsened layout. Don't hand-inline there.

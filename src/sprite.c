@@ -1056,13 +1056,27 @@ void ContinueAffineAnim(struct Sprite *sprite)
         else
         {
             s16 type;
-            s16 funcIndex;
             sAffineAnimStates[matrixNum].animCmdIndex++;
             type = sprite->affineAnims[sAffineAnimStates[matrixNum].animNum][sAffineAnimStates[matrixNum].animCmdIndex].type;
-            funcIndex = 3;
             if (type >= 32765)
-                funcIndex = type - 32765;
-            sAffineAnimCmdFuncs[funcIndex](matrixNum, sprite);
+            {
+                switch (type - 32765)
+                {
+                case 0:
+                    AffineAnimCmd_loop(matrixNum, sprite);
+                    break;
+                case 1:
+                    AffineAnimCmd_jump(matrixNum, sprite);
+                    break;
+                case 2:
+                    AffineAnimCmd_end(matrixNum, sprite);
+                    break;
+                }
+            }
+            else
+            {
+                AffineAnimCmd_frame(matrixNum, sprite);
+            }
         }
         if (sprite->anchored)
             UpdateSpriteMatrixAnchorPos(sprite, sprite->sAnchorX, sprite->sAnchorY);
