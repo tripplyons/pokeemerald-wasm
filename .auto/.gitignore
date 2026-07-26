@@ -1,0 +1,4 @@
+log.jsonl
+.benchlock/
+*.tmp
+dashboard.json
