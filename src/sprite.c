@@ -308,6 +308,7 @@ void ResetSpriteData(void)
 void AnimateSprites(void)
 {
     u8 i;
+    bool8 affineDisabled = gAffineAnimsDisabled;
     for (i = 0; i < MAX_SPRITES; i++)
     {
         struct Sprite *sprite = &gSprites[i];
@@ -317,7 +318,20 @@ void AnimateSprites(void)
             sprite->callback(sprite);
 
             if (sprite->inUse)
-                AnimateSprite(sprite);
+            {
+                if (sprite->animBeginning)
+                    BeginAnim(sprite);
+                else
+                    ContinueAnim(sprite);
+
+                if (!affineDisabled)
+                {
+                    if (sprite->affineAnimBeginning)
+                        BeginAffineAnim(sprite);
+                    else
+                        ContinueAffineAnim(sprite);
+                }
+            }
         }
     }
 }

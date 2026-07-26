@@ -32,3 +32,14 @@
 ## Guardrails reminder
 Every idea must preserve the three 1M-frame golden trajectories. When in doubt
 about equivalence, prefer the smaller, obviously-equal transform.
+
+## PROVEN BIG WIN — pass fusion (iteration 2, verified +8.9% over iter1)
+- [x] Fusing the 3 pre-sort passes over gSprites (UpdateOamCoords + BuildSpritePriorities
+      + sort-key precompute) into ONE loop = +8.9% verified (clean A/B, zero distribution
+      overlap). Cache traffic over the large struct Sprite[64] was a real bottleneck.
+      Packed-u32 sort key + single compare on top (committed d5aedb18d).
+- KEY INSIGHT: redundant PASSES over large arrays (not just redundant ops) are the lever.
+      Look for more multi-pass patterns over gSprites / gOamMatrices / palette / tile buffers.
+- Next candidates: AnimateSprites is a separate gSprites pass but in a different phase (CB1)
+      than BuildOamBuffer (VBlank) — cannot fuse across phases. Within BuildOamBuffer the
+      pre-sort fusion is captured; AddSpritesToOamBuffer runs post-sort (sorted order).
