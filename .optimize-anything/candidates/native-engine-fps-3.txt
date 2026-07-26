@@ -1,4 +1,0 @@
-{
-  "NATIVE_CFLAGS": "-O3 -DNDEBUG -fomit-frame-pointer -flto",
-  "NATIVE_LDFLAGS": "-flto"
-}

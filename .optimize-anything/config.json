@@ -1,20 +1,19 @@
 {
   "version": 4,
   "pythonDependencies": [
-    "gepa[full] @ git+https://github.com/gepa-ai/gepa.git@f919db0a622e2e9f9204779b81fe00cc1b2d808f"
+    "gepa[full] @ git+https://github.com/gepa-ai/gepa.git@f919db0a622e2e9f9204779b81fe00cc1b2d808f",
+    "tenacity>=9.1.2"
   ],
   "profiles": {
     "native-engine-fps-3": {
       "task": ".optimize-anything/tasks/native-engine-fps-3.py",
+      "artifactMode": "code",
       "maxEvals": 20,
       "maxConcurrency": 1,
-      "sandbox": true,
+      "worktreeIsolation": true,
       "engineConfig": {
         "reflection": {
-          "reflection_lm": "openai/gpt-5.1"
-        },
-        "refiner": {
-          "max_refinements": 1
+          "reflection_lm": "openai-codex/gpt-5.6-sol"
         }
       },
       "maxIterationsWithoutImprovement": 6,

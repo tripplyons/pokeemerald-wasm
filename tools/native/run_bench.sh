@@ -37,11 +37,15 @@ if command -v ccache >/dev/null 2>&1 && command -v clang >/dev/null 2>&1; then
   NATIVE_CC="ccache clang"
 fi
 
-BUILD_LOG=$(mktemp /tmp/native_bench_build.XXXXXX.log)
+BUILD_LOG=$(mktemp /tmp/native_bench_build.XXXXXX)
 # Use a serial build. Parallel asset prerequisites can outlive make's
 # top-level process in isolated worktrees, racing the optimizer's cleanup
 # and causing a valid improvement to be discarded.
-if ! make NATIVE_CC="$NATIVE_CC" native-bench >"$BUILD_LOG" 2>&1; then
+MAKE_ARGS=()
+for target in ${NATIVE_MAKE_OLD_FILES:-}; do
+  MAKE_ARGS+=("-o" "$target")
+done
+if ! make "${MAKE_ARGS[@]}" NATIVE_CC="$NATIVE_CC" native-bench >"$BUILD_LOG" 2>&1; then
   python3 - "$BUILD_LOG" <<'PYEOF'
 import json, sys
 with open(sys.argv[1], errors="replace") as f:
@@ -53,7 +57,7 @@ PYEOF
 fi
 rm -f "$BUILD_LOG"
 
-ERR_LOG=$(mktemp /tmp/native_bench_run.XXXXXX.log)
+ERR_LOG=$(mktemp /tmp/native_bench_run.XXXXXX)
 OUT=$("$BENCH" --script "$SCRIPT" --golden "$GOLDEN" --passes 2 2>"$ERR_LOG")
 RC=$?
 if [ $RC -ne 0 ] || [ -z "$OUT" ]; then
