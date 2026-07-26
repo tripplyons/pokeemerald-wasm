@@ -22,6 +22,13 @@ source tree and behavior as much as possible.
 - `make wasm` builds `build/wasm/pokeemerald.wasm`.
 - `make serve-wasm` builds the WASM target and serves the browser frontend.
 - Browser runtime code lives in `web/`.
+- The desktop/native port lives in `tools/native/`:
+  - `native_engine.h` / `native_engine.c`: headless engine core (wasm2c
+    instance, `w2c_env_*` BIOS shims, pad input, flash saves, framebuffer
+    access). No raylib dependency.
+  - `raylib_main.c`: thin raylib GUI frontend (`make native-raylib`).
+  - `bench_main.c`: headless FPS + correctness benchmark
+    (`make native-bench`), never opens a window.
 - WASM include shims live in `include/wasm/`.
 - WASM generators and conversion tools live under `tools/`, for example
   `generate_wasm_assets.py`, `generate_wasm_text.py`, and `wasm_asm_data.py`.
@@ -92,6 +99,25 @@ Valid buttons are `a`, `b`, `select`, `start`, `right`, `left`, `up`, `down`,
 `r`, and `l`. `#` starts a comment. Keep reusable replay inputs in
 `tools/wasm_replays/` and add screenshot events at meaningful route checkpoints
 so future runs show where the automation is.
+
+## Native Engine Benchmark
+
+`make native-bench` builds `build/native/pokeemerald-bench`, a headless
+benchmark with no GUI. It replays `tools/wasm_replays/mudkip_starter.txt`
+from a blank save into separate overworld, menu, and battle states. Each
+scenario warms up for 10,007 frames, then measures exactly 1,000,003
+`WasmRunFrame` calls with no rendering inside the timed region. Rendering
+before and after that fixed count produces FNV-hashed RGBA correctness
+checkpoints without charging the software renderer to engine FPS.
+`tools/native/run_bench.sh` builds and runs two passes against the golden
+hashes in `tools/native/bench_golden.json`, printing one JSON object
+`{"score": <mean aggregate scenario FPS>, "info": {...}}`; score is 0 on
+any hash mismatch, nondeterminism, or invalid timer sample. Regenerate
+goldens only after an intentional engine/rendering change:
+
+```sh
+./build/native/pokeemerald-bench --script tools/wasm_replays/mudkip_starter.txt --passes 2 --write-golden tools/native/bench_golden.json
+```
 
 ## Build And Verification
 
