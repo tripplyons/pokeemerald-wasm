@@ -336,6 +336,26 @@ void BuildOamBuffer(void)
     sShouldProcessSpriteCopyRequests = TRUE;
 }
 
+static u32 sSortKey[MAX_SPRITES];
+
+static s16 CalcSpriteSortY(const struct Sprite *sprite)
+{
+    s16 y = sprite->oam.y;
+    if (y >= DISPLAY_HEIGHT)
+        y = y - 256;
+    if (sprite->oam.affineMode == ST_OAM_AFFINE_DOUBLE
+     && sprite->oam.size == ST_OAM_SIZE_3)
+    {
+        u32 shape = sprite->oam.shape;
+        if (shape == ST_OAM_SQUARE || shape == ST_OAM_V_RECTANGLE)
+        {
+            if (y > 128)
+                y = y - 256;
+        }
+    }
+    return y;
+}
+
 void UpdateOamCoords(void)
 {
     u8 i;
@@ -355,75 +375,38 @@ void UpdateOamCoords(void)
                 sprite->oam.y = sprite->y + sprite->y2 + sprite->centerToCornerVecY;
             }
         }
+        {
+            u16 priority = sprite->subpriority | (sprite->oam.priority << 8);
+            sSpritePriorities[i] = priority;
+            sSortKey[i] = ((u32)priority << 16) | (u16)(32768 - CalcSpriteSortY(sprite));
+        }
     }
 }
 
 void BuildSpritePriorities(void)
 {
-    u16 i;
-    for (i = 0; i < MAX_SPRITES; i++)
-    {
-        struct Sprite *sprite = &gSprites[i];
-        u16 priority = sprite->subpriority | (sprite->oam.priority << 8);
-        sSpritePriorities[i] = priority;
-    }
-}
-
-static s16 CalcSpriteSortY(const struct Sprite *sprite)
-{
-    s16 y = sprite->oam.y;
-
-    if (y >= DISPLAY_HEIGHT)
-        y = y - 256;
-
-    if (sprite->oam.affineMode == ST_OAM_AFFINE_DOUBLE
-     && sprite->oam.size == ST_OAM_SIZE_3)
-    {
-        u32 shape = sprite->oam.shape;
-        if (shape == ST_OAM_SQUARE || shape == ST_OAM_V_RECTANGLE)
-        {
-            if (y > 128)
-                y = y - 256;
-        }
-    }
-
-    return y;
 }
 
 void SortSprites(void)
 {
     u8 i;
-    static s16 sSortY[MAX_SPRITES];
-
-    for (i = 0; i < MAX_SPRITES; i++)
-        sSortY[i] = CalcSpriteSortY(&gSprites[i]);
-
     for (i = 1; i < MAX_SPRITES; i++)
     {
         u8 j = i;
-        u16 sprite1Priority = sSpritePriorities[sSpriteOrder[i - 1]];
-        u16 sprite2Priority = sSpritePriorities[sSpriteOrder[i]];
-        s16 sprite1Y = sSortY[sSpriteOrder[i - 1]];
-        s16 sprite2Y = sSortY[sSpriteOrder[i]];
-
-        while (j > 0
-            && ((sprite1Priority > sprite2Priority)
-             || (sprite1Priority == sprite2Priority && sprite1Y < sprite2Y)))
+        u32 sprite1Key = sSortKey[sSpriteOrder[i - 1]];
+        u32 sprite2Key = sSortKey[sSpriteOrder[i]];
+        while (j > 0 && sprite1Key > sprite2Key)
         {
             u8 temp = sSpriteOrder[j];
             sSpriteOrder[j] = sSpriteOrder[j - 1];
             sSpriteOrder[j - 1] = temp;
-
             j--;
 #ifdef UBFIX
             if (j == 0)
                 break;
 #endif
-
-            sprite1Priority = sSpritePriorities[sSpriteOrder[j - 1]];
-            sprite2Priority = sSpritePriorities[sSpriteOrder[j]];
-            sprite1Y = sSortY[sSpriteOrder[j - 1]];
-            sprite2Y = sSortY[sSpriteOrder[j]];
+            sprite1Key = sSortKey[sSpriteOrder[j - 1]];
+            sprite2Key = sSortKey[sSpriteOrder[j]];
         }
     }
 }
