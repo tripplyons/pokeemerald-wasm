@@ -296,6 +296,9 @@ EWRAM_DATA bool8 gAffineAnimsDisabled = FALSE;
 
 static u32 sSortKey[MAX_SPRITES];
 static u32 sPrevSortKey[MAX_SPRITES];
+static u8 sSpriteOrderPos[MAX_SPRITES];
+static u8 sChangedSprites[MAX_SPRITES];
+static u8 sChangedSpriteCount;
 static bool8 sSortDirty;
 static bool8 sSpriteOrderValid;
 
@@ -384,6 +387,7 @@ void UpdateOamCoords(void)
 {
     u8 i;
     sSortDirty = !sSpriteOrderValid;
+    sChangedSpriteCount = 0;
     for (i = 0; i < MAX_SPRITES; i++)
     {
         struct Sprite *sprite = &gSprites[i];
@@ -406,9 +410,24 @@ void UpdateOamCoords(void)
         key = ((u32)(sprite->subpriority | (sprite->oam.priority << 8)) << 16)
                 | (u16)(32768 - CalcSpriteSortY(sprite));
         if (key != sPrevSortKey[i])
-            sSortDirty = TRUE;
+            sChangedSprites[sChangedSpriteCount++] = i;
         sPrevSortKey[i] = key;
         sSortKey[i] = key;
+    }
+
+    if (sSpriteOrderValid)
+    {
+        for (i = 0; i < sChangedSpriteCount; i++)
+        {
+            u8 spriteId = sChangedSprites[i];
+            u8 pos = sSpriteOrderPos[spriteId];
+            if ((pos > 0 && sSortKey[sSpriteOrder[pos - 1]] > sSortKey[spriteId])
+             || (pos + 1 < MAX_SPRITES && sSortKey[spriteId] > sSortKey[sSpriteOrder[pos + 1]]))
+            {
+                sSortDirty = TRUE;
+                break;
+            }
+        }
     }
 }
 
@@ -436,6 +455,8 @@ void SortSprites(void)
             sprite2Key = sSortKey[sSpriteOrder[j]];
         }
     }
+    for (i = 0; i < MAX_SPRITES; i++)
+        sSpriteOrderPos[sSpriteOrder[i]] = i;
     sSpriteOrderValid = TRUE;
 }
 
