@@ -407,9 +407,11 @@ void UpdateOamCoords(void)
         key = ((u32)(sprite->subpriority | (sprite->oam.priority << 8)) << 16)
                 | (u16)(32768 - CalcSpriteSortY(sprite));
         if (key != sPrevSortKey[i])
+        {
             sChangedSprites[sChangedSpriteCount++] = i;
-        sPrevSortKey[i] = key;
-        sSortKey[i] = key;
+            sPrevSortKey[i] = key;
+            sSortKey[i] = key;
+        }
     }
 
     if (sSpriteOrderValid)
