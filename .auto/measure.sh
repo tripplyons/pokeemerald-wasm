@@ -45,6 +45,7 @@ if [ "$(pwd)" != "$MAIN_REPO" ]; then
   while IFS= read -r f; do
     [ -z "$f" ] && continue
     case "$f" in
+      tools/native/performance.mk) only_native=0; only_src=0 ;;
       tools/native/*) ;;
       src/*.c) only_native=0 ;;
       *) only_native=0; only_src=0 ;;
