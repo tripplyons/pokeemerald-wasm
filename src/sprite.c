@@ -329,7 +329,7 @@ void AnimateSprites(void)
                 else
                     ContinueAnim(sprite);
 
-                if (!affineDisabled)
+                if (!affineDisabled && (sprite->oam.affineMode & ST_OAM_AFFINE_ON_MASK))
                 {
                     if (sprite->affineAnimBeginning)
                         BeginAffineAnim(sprite);

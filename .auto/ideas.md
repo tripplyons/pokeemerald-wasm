@@ -95,3 +95,37 @@ BuildOamBuffer (~46%) is now mostly necessary OAM-emission work; resistant to sa
       pollution from non-output-affecting state (invisible sprites) silently disables them.
       Arm1 (keys for inUse incl invisible) gained less (+15.9%) -> confirmed invisible sprites
       were the polluters.
+
+## PROVEN WIN — AffineAnimCmd_end lazy cache (iteration 9, +1.9%, cumulative ~+62%)
+- [x] AffineAnimCmd_end recomputed the matrix (2 divisions + trig) every frame for ended affine
+      sprites. Lazy cache maintained ONLY in the end path (NOT the active ApplyAffineAnimFrame...
+      path, which is what made iter7's version regress): when (xScale,yScale,rotation) unchanged,
+      reuse cached matrix; output-check skips even the copy when gOamMatrices already matches.
+      Always overwrites gOamMatrices on recompute -> preserves "affine state wins over external
+      writers" semantics (safe vs battle_anim_*/pokemon_animation direct writers). +1.9%.
+- DIMINISHING RETURNS: wins went +2.6,+8.9,+8.8,+5.9,+22.5,+1.9. Remaining hotspots are necessary
+      OAM emission (BuildOamBuffer ~47%, sort now skipped) + gameplay callbacks (untouchable).
+
+## Iteration 10 — NEGATIVE (confirms matrix/output-skip exhaustion)
+- CopyMatricesToOamBuffer output-comparison skip: REGRESSED -3.6%. 4 reads/matrix to skip 4
+  writes is a net loss (both touch same cache lines). External writers (battle_anim_*.c write
+  gOamMatrices directly) also block any dirty-flag variant. CopyMatrices is irreducible.
+- AffineAnimCmd_end local-pointer hoist: neutral (-0.1%); compiler already CSEs the indexing.
+- PLATEAU: wins +2.6,+8.9,+8.8,+5.9,+22.5,+1.9 then iter10 all negative/neutral. At safe optimum
+  (~+62% cumulative). Remaining: BuildOamBuffer 47% = necessary OAM emission; gameplay untouchable.
+
+## Iteration 11 — NEGATIVE (emission inner loop is compiler-optimal)
+- Hoist gOamLimit to local: -1.1% (compiler LICM already hoists it).
+- Load struct Subsprite once/iter: -0.9% (compiler already register-loads the 4-byte struct).
+- Both: -0.4%. The AddSubspritesToOamBuffer inner loop cannot be hand-improved.
+
+## FINAL VERIFIED STATE (clean rebuild x2): fps = 3,262,521 / 3,262,977 (±0.01%)
+- +62.0% over original baseline 2,014,781. Golden hashes + determinism gate PASS on every run.
+- Per-scenario: overworld ~2.43M, menu ~4.52M, battle ~2.81M (baseline ~1.6M/2.6M/1.6M).
+- EXHAUSTION CONFIRMED: iterations 10 & 11 produced ZERO wins (all neutral/negative).
+  Every remaining hotspot is either necessary work (BuildOamBuffer OAM emission 47%,
+  gameplay callbacks 14%), compiler-optimal (emission loop), external-writer-blocked
+  (matrix/palette dirty-skips), or ~0-net (palette compare costs ~= the copy).
+- Safe provably-equivalent surface is at its optimum. Further gains would require either
+  unsafe transforms (violating the equivalence mandate) or changing the rendering approach
+  (out of scope). RECOMMEND STOPPING unless a fundamentally new angle is identified.
