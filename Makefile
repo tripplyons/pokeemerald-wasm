@@ -339,6 +339,8 @@ $(KINDLE_FRONTEND_O): tools/wasm_native_kindle.c $(NATIVE_WASM2C_H) Makefile
 $(NATIVE_KINDLE): $(KINDLE_WASM2C_O) $(KINDLE_WASM_RT_O) $(KINDLE_WASM_RT_MEM_O) $(KINDLE_FRONTEND_O) Makefile
 	$(KINDLE_CC) $(KINDLE_CFLAGS) -o $@ $(KINDLE_WASM2C_O) $(KINDLE_WASM_RT_O) $(KINDLE_WASM_RT_MEM_O) $(KINDLE_FRONTEND_O) -lm
 
+$(WASM_OBJ_DIR)/sprite.o: WASM_OPT_FLAGS := -O3
+
 $(WASM_OBJ_DIR)/%.o: $(C_SUBDIR)/%.c
 	@mkdir -p $(dir $@)
 	$(WASM_CC) --target=wasm32-unknown-unknown -DMODERN=1 -DWASM=1 -I $(WASM_BUILD_DIR) -I include/wasm -I include -iquote include -E $< | $(PREPROC) -i -g $(ASSETS_DIR_NAME) $< charmap.txt | $(WASM_CC) --target=wasm32-unknown-unknown -x c $(WASM_OPT_FLAGS) -Wno-incompatible-library-redeclaration -Wno-unknown-attributes -Wno-ignored-attributes -Wno-parentheses -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast -Wno-builtin-requires-header -Wno-gnu-alignof-expression -Wno-unknown-escape-sequence -Wno-excess-initializers -c - -o $@
