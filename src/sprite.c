@@ -47,7 +47,6 @@ struct OamDimensions
 };
 
 static void UpdateOamCoords(void);
-static void BuildSpritePriorities(void);
 static void SortSprites(void);
 static void CopyMatricesToOamBuffer(void);
 static void AddSpritesToOamBuffer(void);
@@ -283,7 +282,6 @@ COMMON_DATA u32 gOamMatrixAllocBitmap = 0;
 COMMON_DATA u8 gReservedSpritePaletteCount = 0;
 
 EWRAM_DATA struct Sprite gSprites[MAX_SPRITES + 1] = {0};
-EWRAM_DATA static u16 sSpritePriorities[MAX_SPRITES] = {0};
 EWRAM_DATA static u8 sSpriteOrder[MAX_SPRITES] = {0};
 EWRAM_DATA static bool8 sShouldProcessSpriteCopyRequests = 0;
 EWRAM_DATA static u8 sSpriteCopyRequestCount = 0;
@@ -295,6 +293,11 @@ EWRAM_DATA s16 gSpriteCoordOffsetX = 0;
 EWRAM_DATA s16 gSpriteCoordOffsetY = 0;
 EWRAM_DATA struct OamMatrix gOamMatrices[OAM_MATRIX_COUNT] = {0};
 EWRAM_DATA bool8 gAffineAnimsDisabled = FALSE;
+
+static u32 sSortKey[MAX_SPRITES];
+static u32 sPrevSortKey[MAX_SPRITES];
+static bool8 sSortDirty;
+static bool8 sSpriteOrderValid;
 
 void ResetSpriteData(void)
 {
@@ -308,6 +311,7 @@ void ResetSpriteData(void)
     AllocSpriteTiles(0);
     gSpriteCoordOffsetX = 0;
     gSpriteCoordOffsetY = 0;
+    sSpriteOrderValid = FALSE;
 }
 
 void AnimateSprites(void)
@@ -349,7 +353,6 @@ void BuildOamBuffer(void)
 {
     u8 temp;
     UpdateOamCoords();
-    BuildSpritePriorities();
     SortSprites();
     temp = gMain.oamLoadDisabled;
     gMain.oamLoadDisabled = TRUE;
@@ -358,10 +361,6 @@ void BuildOamBuffer(void)
     gMain.oamLoadDisabled = temp;
     sShouldProcessSpriteCopyRequests = TRUE;
 }
-
-static u32 sSortKey[MAX_SPRITES];
-static u32 sPrevSortKey[MAX_SPRITES];
-static bool8 sSortDirty;
 
 static s16 CalcSpriteSortY(const struct Sprite *sprite)
 {
@@ -384,10 +383,12 @@ static s16 CalcSpriteSortY(const struct Sprite *sprite)
 void UpdateOamCoords(void)
 {
     u8 i;
-    sSortDirty = FALSE;
+    sSortDirty = !sSpriteOrderValid;
     for (i = 0; i < MAX_SPRITES; i++)
     {
         struct Sprite *sprite = &gSprites[i];
+        u32 key;
+
         if (sprite->inUse && !sprite->invisible)
         {
             if (sprite->coordOffsetEnabled)
@@ -400,20 +401,15 @@ void UpdateOamCoords(void)
                 sprite->oam.x = sprite->x + sprite->x2 + sprite->centerToCornerVecX;
                 sprite->oam.y = sprite->y + sprite->y2 + sprite->centerToCornerVecY;
             }
-            {
-            u32 key = ((u32)(sprite->subpriority | (sprite->oam.priority << 8)) << 16)
-                        | (u16)(32768 - CalcSpriteSortY(sprite));
-            if (key != sPrevSortKey[i])
-                sSortDirty = TRUE;
-            sPrevSortKey[i] = key;
-            sSortKey[i] = key;
-            }
         }
-    }
-}
 
-void BuildSpritePriorities(void)
-{
+        key = ((u32)(sprite->subpriority | (sprite->oam.priority << 8)) << 16)
+                | (u16)(32768 - CalcSpriteSortY(sprite));
+        if (key != sPrevSortKey[i])
+            sSortDirty = TRUE;
+        sPrevSortKey[i] = key;
+        sSortKey[i] = key;
+    }
 }
 
 void SortSprites(void)
@@ -440,7 +436,9 @@ void SortSprites(void)
             sprite2Key = sSortKey[sSpriteOrder[j]];
         }
     }
+    sSpriteOrderValid = TRUE;
 }
+
 void CopyMatricesToOamBuffer(void)
 {
     u8 i;
