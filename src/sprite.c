@@ -368,18 +368,16 @@ void BuildOamBuffer(void)
 static s16 CalcSpriteSortY(const struct Sprite *sprite)
 {
     s16 y = sprite->oam.y;
-    if (y >= DISPLAY_HEIGHT)
-        y = y - 256;
+    s16 wrapThreshold = DISPLAY_HEIGHT;
     if (sprite->oam.affineMode == ST_OAM_AFFINE_DOUBLE
      && sprite->oam.size == ST_OAM_SIZE_3)
     {
         u32 shape = sprite->oam.shape;
         if (shape == ST_OAM_SQUARE || shape == ST_OAM_V_RECTANGLE)
-        {
-            if (y > 128)
-                y = y - 256;
-        }
+            wrapThreshold = 129;
     }
+    if (y >= wrapThreshold)
+        y = y - 256;
     return y;
 }
 
@@ -395,16 +393,15 @@ void UpdateOamCoords(void)
 
         if (sprite->inUse && !sprite->invisible)
         {
+            s32 x = sprite->x + sprite->x2 + sprite->centerToCornerVecX;
+            s32 y = sprite->y + sprite->y2 + sprite->centerToCornerVecY;
             if (sprite->coordOffsetEnabled)
             {
-                sprite->oam.x = sprite->x + sprite->x2 + sprite->centerToCornerVecX + gSpriteCoordOffsetX;
-                sprite->oam.y = sprite->y + sprite->y2 + sprite->centerToCornerVecY + gSpriteCoordOffsetY;
+                x += gSpriteCoordOffsetX;
+                y += gSpriteCoordOffsetY;
             }
-            else
-            {
-                sprite->oam.x = sprite->x + sprite->x2 + sprite->centerToCornerVecX;
-                sprite->oam.y = sprite->y + sprite->y2 + sprite->centerToCornerVecY;
-            }
+            sprite->oam.x = x;
+            sprite->oam.y = y;
         }
 
         key = ((u32)(sprite->subpriority | (sprite->oam.priority << 8)) << 16)
