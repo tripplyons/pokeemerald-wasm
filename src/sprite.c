@@ -324,7 +324,11 @@ void AnimateSprites(void)
 
             if (sprite->inUse)
             {
-                if (sprite->animBeginning)
+                if (!sprite->animBeginning && sprite->animEnded)
+                {
+                    /* anim finished: nothing to do this frame */
+                }
+                else if (sprite->animBeginning)
                     BeginAnim(sprite);
                 else
                     ContinueAnim(sprite);
