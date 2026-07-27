@@ -129,3 +129,17 @@ BuildOamBuffer (~46%) is now mostly necessary OAM-emission work; resistant to sa
 - Safe provably-equivalent surface is at its optimum. Further gains would require either
   unsafe transforms (violating the equivalence mandate) or changing the rendering approach
   (out of scope). RECOMMEND STOPPING unless a fundamentally new angle is identified.
+
+## PROVEN PATTERN — skip settled-state re-run handlers (iterations 12 & 13)
+- [x] iter12 (+1.2%): AnimateSprites called BeginAffineAnim/ContinueAffineAnim for EVERY active
+      sprite; non-affine sprites (majority) just early-out inside. Hoist (affineMode & ON_MASK)
+      check into AnimateSprites to skip the call. affineDisabled-first order best.
+- [x] iter13 (+1.7%): ended anims re-run ContinueAnim -> AnimCmd_end (animCmdIndex++ then -- ,
+      animEnded=TRUE) every frame — a no-op oscillation. Skip ContinueAnim when animEnded
+      (animBeginning path -> BeginAnim clears animEnded, so restarts safe). Ended-first branch
+      layout `if (!animBeginning && animEnded) {} else if (animBeginning) BeginAnim else
+      ContinueAnim` beats a plain else-if (combined check short-circuits static sprites).
+- KEY INSIGHT: sprites in a SETTLED state (ended anim/affine, non-affine) re-run no-op handlers
+      every frame. Hoist the settling condition into the caller to skip the call. Look for more:
+      affineAnimEnded skip in ContinueAffineAnim callers, tileset/palette idle, object-event idle.
+- Cumulative ~+67% (3.36M vs 2.01M baseline). Clean-rebuild verified each step.

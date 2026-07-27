@@ -1044,7 +1044,7 @@ void BeginAffineAnim(struct Sprite *sprite)
     if ((sprite->oam.affineMode & ST_OAM_AFFINE_ON_MASK) && sprite->affineAnims[0][0].type != 32767)
     {
         struct AffineAnimFrameCmd frameCmd;
-        u8 matrixNum = GetSpriteMatrixNum(sprite);
+        u8 matrixNum = sprite->oam.matrixNum;
         AffineAnimStateRestartAnim(matrixNum);
         GetAffineAnimFrame(matrixNum, sprite, &frameCmd);
         sprite->affineAnimBeginning = FALSE;
@@ -1060,7 +1060,16 @@ void ContinueAffineAnim(struct Sprite *sprite)
 {
     if (sprite->oam.affineMode & ST_OAM_AFFINE_ON_MASK)
     {
-        u8 matrixNum = GetSpriteMatrixNum(sprite);
+        u8 matrixNum = sprite->oam.matrixNum;
+
+        if (sprite->affineAnimEnded)
+        {
+            sAffineAnimStates[matrixNum].animCmdIndex++;
+            AffineAnimCmd_end(matrixNum, sprite);
+            if (sprite->anchored)
+                UpdateSpriteMatrixAnchorPos(sprite, sprite->sAnchorX, sprite->sAnchorY);
+            return;
+        }
 
         if (sAffineAnimStates[matrixNum].delayCounter)
         {
