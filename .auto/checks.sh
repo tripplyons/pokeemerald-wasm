@@ -27,7 +27,22 @@ except Exception:
     sys.stderr.write("checks: bench produced no/invalid output\n")
     sys.exit(1)
 info = d.get("info", {})
-if not (d.get("score", 0) > 0 and info.get("hashes_ok") and info.get("deterministic") and info.get("progressing") and not info.get("mismatches")):
-    sys.stderr.write(f"checks: equivalence gate failed: {info.get('mismatches')} hashes_ok={info.get('hashes_ok')} det={info.get('deterministic')}\n")
+score = d.get("score", 0)
+ok = (
+    isinstance(score, (int, float)) and score > 0
+    and info.get("hashes_ok") is True
+    and info.get("deterministic") is True
+    and info.get("progressing") is True
+    and info.get("sprite_sort_check") is True
+    and not info.get("mismatches")
+)
+if not ok:
+    sys.stderr.write(
+        "checks: equivalence gate failed: "
+        f"score={score} hashes_ok={info.get('hashes_ok')} "
+        f"det={info.get('deterministic')} prog={info.get('progressing')} "
+        f"sprite_sort={info.get('sprite_sort_check')} "
+        f"mismatches={info.get('mismatches')}\n"
+    )
     sys.exit(1)
 PYEOF

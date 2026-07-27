@@ -67,6 +67,21 @@ static void fail_json(const char *error)
     exit(0);
 }
 
+static void check_sprite_sort(void)
+{
+    NativeEngine *engine = native_engine_create();
+    if (!engine)
+        fail_json("sprite sort check engine create failed");
+
+    uint32_t failures = native_engine_check_sprite_sort(engine);
+    native_engine_destroy(engine);
+    if (failures != 0) {
+        printf("{\"score\":0,\"info\":{\"error\":\"sprite sort regression check failed\",\"failures\":%u}}\n",
+               failures);
+        exit(0);
+    }
+}
+
 static uint32_t button_mask(const char *name)
 {
     if (!strcmp(name, "a")) return NATIVE_BUTTON_A;
@@ -254,6 +269,8 @@ int main(int argc, char **argv)
     const char *writeGoldenPath = NULL;
     int passes = DEFAULT_PASSES;
 
+    check_sprite_sort();
+
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--script") && i + 1 < argc)
             scriptPath = argv[++i];
@@ -377,6 +394,7 @@ int main(int argc, char **argv)
     printf("    ],\n");
     printf("    \"deterministic\": %s,\n", deterministic ? "true" : "false");
     printf("    \"progressing\": %s,\n", progressing ? "true" : "false");
+    printf("    \"sprite_sort_check\": true,\n");
     printf("    \"golden_present\": %s,\n", haveGolden ? "true" : "false");
     printf("    \"hashes_ok\": %s,\n", haveGolden && hashesOk ? "true" : "false");
     printf("    \"mismatches\": [");

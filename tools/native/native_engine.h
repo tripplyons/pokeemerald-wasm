@@ -64,4 +64,8 @@ uint32_t native_engine_load_flash(NativeEngine *engine, const char *path);
 // set). Returns the new last-hash value.
 uint32_t native_engine_save_flash_if_changed(NativeEngine *engine, const char *path, uint32_t lastHash, bool force);
 
+// Returns zero when the WASM sprite ordering regression checks pass.
+// Bits 0-2 identify reset, inactive-slot, and invisible-slot failures.
+uint32_t native_engine_check_sprite_sort(NativeEngine *engine);
+
 #endif // POKEEMERALD_NATIVE_ENGINE_H

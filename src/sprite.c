@@ -439,6 +439,89 @@ void SortSprites(void)
     sSpriteOrderValid = TRUE;
 }
 
+#if WASM
+enum
+{
+    SPRITE_SORT_CHECK_RESET = 1 << 0,
+    SPRITE_SORT_CHECK_INACTIVE = 1 << 1,
+    SPRITE_SORT_CHECK_INVISIBLE = 1 << 2,
+};
+
+static void SetSpriteSortCheckSprite(u8 spriteId, u8 subpriority)
+{
+    struct Sprite *sprite = &gSprites[spriteId];
+
+    ResetSprite(sprite);
+    sprite->inUse = TRUE;
+    sprite->subpriority = subpriority;
+    sprite->oam.priority = 0;
+    sprite->x = 0;
+    sprite->y = 0;
+    sprite->centerToCornerVecX = 0;
+    sprite->centerToCornerVecY = 0;
+}
+
+static bool8 SpriteSortCheckStartsWith(u8 first, u8 second)
+{
+    return sSpriteOrder[0] == first && sSpriteOrder[1] == second;
+}
+
+u32 WasmCheckSpriteSort(void)
+{
+    u32 failures = 0;
+
+    // ResetSpriteData must invalidate an order cached for the same per-slot keys.
+    ResetSpriteData();
+    SetSpriteSortCheckSprite(0, 2);
+    SetSpriteSortCheckSprite(1, 1);
+    UpdateOamCoords();
+    SortSprites();
+    ResetSpriteData();
+    SetSpriteSortCheckSprite(0, 2);
+    SetSpriteSortCheckSprite(1, 1);
+    UpdateOamCoords();
+    SortSprites();
+    if (!SpriteSortCheckStartsWith(1, 0))
+        failures |= SPRITE_SORT_CHECK_RESET;
+
+    // An inactive slot must move before reuse so stable ties match the original sort.
+    ResetSpriteData();
+    SetSpriteSortCheckSprite(0, 1);
+    SetSpriteSortCheckSprite(1, 1);
+    UpdateOamCoords();
+    SortSprites();
+    ResetSprite(&gSprites[0]);
+    UpdateOamCoords();
+    SortSprites();
+    SetSpriteSortCheckSprite(0, 1);
+    UpdateOamCoords();
+    SortSprites();
+    if (!SpriteSortCheckStartsWith(1, 0))
+        failures |= SPRITE_SORT_CHECK_INACTIVE;
+
+    // Hidden key changes must also preserve tie order when the sprite is shown again.
+    ResetSpriteData();
+    SetSpriteSortCheckSprite(0, 1);
+    SetSpriteSortCheckSprite(1, 1);
+    UpdateOamCoords();
+    SortSprites();
+    gSprites[0].invisible = TRUE;
+    gSprites[0].subpriority = 2;
+    UpdateOamCoords();
+    SortSprites();
+    gSprites[0].subpriority = 1;
+    UpdateOamCoords();
+    SortSprites();
+    gSprites[0].invisible = FALSE;
+    UpdateOamCoords();
+    SortSprites();
+    if (!SpriteSortCheckStartsWith(1, 0))
+        failures |= SPRITE_SORT_CHECK_INVISIBLE;
+
+    return failures;
+}
+#endif
+
 void CopyMatricesToOamBuffer(void)
 {
     u8 i;

@@ -425,3 +425,8 @@ uint32_t native_engine_save_flash_if_changed(NativeEngine *engine, const char *p
 
     return lastHash;
 }
+
+uint32_t native_engine_check_sprite_sort(NativeEngine *engine)
+{
+    return w2c_0x24pokeemerald0x2Ewasm_WasmCheckSpriteSort(&engine->instance);
+}
