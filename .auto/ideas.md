@@ -73,3 +73,14 @@ REMAINING (last safe structural idea, marginal ~+1-2%):
     sorted (persists across frames) -> skip insertion sort. Detect change inside the fused
     pre-sort pass (no extra pass). Safe. Likely near noise floor.
 BuildOamBuffer (~46%) is now mostly necessary OAM-emission work; resistant to safe opts.
+
+## PROVEN BIG WIN — sort-skip-when-unchanged (iteration 6, +5.9%)
+- [x] sSpriteOrder persists across frames (only SortSprites modifies it). If this frame's
+      packed sort keys == last frame's, the order is already correct -> skip the insertion sort
+      entirely. Detect change INSIDE the fused pre-sort pass (compare key vs sPrevSortKey[i],
+      set sSortDirty; update sPrevSortKey[i] inline -> no extra pass, no memcpy). Cumulative ~+30%.
+- KEY INSIGHT: the sort's dependent random-access key lookups (sSortKey[sSpriteOrder[i]]) were
+      costlier than the profile implied. Reusing persistent derived state when inputs are stable
+      is a strong lever. NOTE: memcmp/memcpy UNAVAILABLE in sprite.c wasm build (arm0 crashed).
+- Look for more persistent-state-reuse: CopyMatricesToOamBuffer (skip if matrices unchanged),
+      but most other BuildOamBuffer work produces immediately-consumed output (can't skip).

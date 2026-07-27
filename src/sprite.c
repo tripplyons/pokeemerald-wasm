@@ -391,15 +391,14 @@ void UpdateOamCoords(void)
                 sprite->oam.x = sprite->x + sprite->x2 + sprite->centerToCornerVecX;
                 sprite->oam.y = sprite->y + sprite->y2 + sprite->centerToCornerVecY;
             }
-        }
-        {
-            u16 priority = sprite->subpriority | (sprite->oam.priority << 8);
-            u32 key = ((u32)priority << 16) | (u16)(32768 - CalcSpriteSortY(sprite));
-            sSpritePriorities[i] = priority;
+            {
+            u32 key = ((u32)(sprite->subpriority | (sprite->oam.priority << 8)) << 16)
+                        | (u16)(32768 - CalcSpriteSortY(sprite));
             if (key != sPrevSortKey[i])
                 sSortDirty = TRUE;
             sPrevSortKey[i] = key;
             sSortKey[i] = key;
+            }
         }
     }
 }
