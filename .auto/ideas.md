@@ -84,3 +84,14 @@ BuildOamBuffer (~46%) is now mostly necessary OAM-emission work; resistant to sa
       is a strong lever. NOTE: memcmp/memcpy UNAVAILABLE in sprite.c wasm build (arm0 crashed).
 - Look for more persistent-state-reuse: CopyMatricesToOamBuffer (skip if matrices unchanged),
       but most other BuildOamBuffer work produces immediately-consumed output (can't skip).
+
+## PROVEN HUGE WIN — gate sort-key to emitted sprites (iteration 8, +22.5%, cumulative ~+59%)
+- [x] Computing sort keys for ALL 64 sprites (incl invisible-but-active ones whose positions
+      update off-screen every frame) kept sSortDirty permanently TRUE -> the iter6 sort-skip
+      NEVER triggered. Gating key computation to inUse&&!invisible (the actually-emitted set)
+      makes the sort-skip effective -> insertion sort skipped on most frames. +22.5%.
+- Also dropped the dead sSpritePriorities write (never read; packed sort uses sSortKey).
+- KEY INSIGHT: persistent-state skips (sort-skip) are only as good as the change-detection;
+      pollution from non-output-affecting state (invisible sprites) silently disables them.
+      Arm1 (keys for inUse incl invisible) gained less (+15.9%) -> confirmed invisible sprites
+      were the polluters.

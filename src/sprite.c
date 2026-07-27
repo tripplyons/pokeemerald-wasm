@@ -271,6 +271,11 @@ static const struct OamDimensions sOamDimensions[3][4] =
 static u16 sSpriteTileRangeTags[MAX_SPRITES];
 static u16 sSpriteTileRanges[MAX_SPRITES * 2];
 static struct AffineAnimState sAffineAnimStates[OAM_MATRIX_COUNT];
+static struct OamMatrix sEndMatrix[OAM_MATRIX_COUNT];
+static s16 sEndXScale[OAM_MATRIX_COUNT];
+static s16 sEndYScale[OAM_MATRIX_COUNT];
+static u16 sEndRotation[OAM_MATRIX_COUNT];
+static bool8 sEndValid[OAM_MATRIX_COUNT];
 static u16 sSpritePaletteTags[16];
 
 // iwram common
@@ -1151,10 +1156,29 @@ void AffineAnimCmd_jump(u8 matrixNum, struct Sprite *sprite)
 
 void AffineAnimCmd_end(u8 matrixNum, struct Sprite *sprite)
 {
-    struct AffineAnimFrameCmd dummyFrameCmd = {0};
     sprite->affineAnimEnded = TRUE;
     sAffineAnimStates[matrixNum].animCmdIndex--;
-    ApplyAffineAnimFrameRelativeAndUpdateMatrix(matrixNum, &dummyFrameCmd);
+    if (sEndValid[matrixNum]
+     && sAffineAnimStates[matrixNum].xScale == sEndXScale[matrixNum]
+     && sAffineAnimStates[matrixNum].yScale == sEndYScale[matrixNum]
+     && sAffineAnimStates[matrixNum].rotation == sEndRotation[matrixNum])
+    {
+        if (gOamMatrices[matrixNum].a != sEndMatrix[matrixNum].a
+         || gOamMatrices[matrixNum].b != sEndMatrix[matrixNum].b
+         || gOamMatrices[matrixNum].c != sEndMatrix[matrixNum].c
+         || gOamMatrices[matrixNum].d != sEndMatrix[matrixNum].d)
+            CopyOamMatrix(matrixNum, &sEndMatrix[matrixNum]);
+    }
+    else
+    {
+        struct AffineAnimFrameCmd dummyFrameCmd = {0};
+        ApplyAffineAnimFrameRelativeAndUpdateMatrix(matrixNum, &dummyFrameCmd);
+        sEndXScale[matrixNum] = sAffineAnimStates[matrixNum].xScale;
+        sEndYScale[matrixNum] = sAffineAnimStates[matrixNum].yScale;
+        sEndRotation[matrixNum] = sAffineAnimStates[matrixNum].rotation;
+        sEndMatrix[matrixNum] = gOamMatrices[matrixNum];
+        sEndValid[matrixNum] = TRUE;
+    }
 }
 
 void AffineAnimCmd_frame(u8 matrixNum, struct Sprite *sprite)
