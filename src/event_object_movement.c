@@ -2334,6 +2334,9 @@ u8 CopySprite(struct Sprite *sprite, s16 x, s16 y, u8 subpriority)
             gSprites[i].x = x;
             gSprites[i].y = y;
             gSprites[i].subpriority = subpriority;
+#if WASM
+            WasmSetSpriteActive(i, gSprites[i].inUse);
+#endif
             break;
         }
     }
@@ -2352,6 +2355,9 @@ u8 CreateCopySpriteAt(struct Sprite *sprite, s16 x, s16 y, u8 subpriority)
             gSprites[i].x = x;
             gSprites[i].y = y;
             gSprites[i].subpriority = subpriority;
+#if WASM
+            WasmSetSpriteActive(i, gSprites[i].inUse);
+#endif
             return i;
         }
     }

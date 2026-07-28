@@ -309,6 +309,19 @@ static bool8 sVisibleSpriteOrderDirty;
 static u64 sActiveSpriteMask;
 #endif
 
+#if WASM
+void WasmSetSpriteActive(u8 spriteId, bool8 active)
+{
+    if (spriteId < MAX_SPRITES)
+    {
+        if (active)
+            sActiveSpriteMask |= (u64)1 << spriteId;
+        else
+            sActiveSpriteMask &= ~((u64)1 << spriteId);
+    }
+}
+#endif
+
 void ResetSpriteData(void)
 {
     ResetOamRange(0, 128);
@@ -508,6 +521,9 @@ static void SetSpriteSortCheckSprite(u8 spriteId, u8 subpriority)
 
     ResetSprite(sprite);
     sprite->inUse = TRUE;
+#if WASM
+    WasmSetSpriteActive(spriteId, TRUE);
+#endif
     sprite->subpriority = subpriority;
     sprite->oam.priority = 0;
     sprite->x = 0;
@@ -719,7 +735,7 @@ u8 CreateSpriteAt(u8 index, const struct SpriteTemplate *template, s16 x, s16 y,
         sprite->oam.paletteNum = IndexOfSpritePaletteTag(template->paletteTag);
 
 #if WASM
-    sActiveSpriteMask |= (u64)1 << index;
+    WasmSetSpriteActive(index, TRUE);
 #endif
     return index;
 }
@@ -819,8 +835,7 @@ void ResetSprite(struct Sprite *sprite)
 {
 #if WASM
     u32 spriteId = sprite - gSprites;
-    if (spriteId < MAX_SPRITES)
-        sActiveSpriteMask &= ~((u64)1 << spriteId);
+    WasmSetSpriteActive(spriteId, FALSE);
 #endif
     *sprite = sDummySprite;
 }

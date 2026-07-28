@@ -1638,6 +1638,9 @@ s16 CloneBattlerSpriteWithBlend(u8 animBattler)
                 gSprites[i] = gSprites[spriteId];
                 gSprites[i].oam.objMode = ST_OAM_OBJ_BLEND;
                 gSprites[i].invisible = FALSE;
+#if WASM
+                WasmSetSpriteActive(i, TRUE);
+#endif
                 return i;
             }
         }

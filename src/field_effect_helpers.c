@@ -128,6 +128,9 @@ static void UpdateObjectReflectionSprite(struct Sprite *reflectionSprite)
     if (!objectEvent->active || !objectEvent->hasReflection || objectEvent->localId != reflectionSprite->sReflectionObjEventLocalId)
     {
         reflectionSprite->inUse = FALSE;
+#if WASM
+        WasmSetSpriteActive(reflectionSprite - gSprites, FALSE);
+#endif
     }
     else
     {
