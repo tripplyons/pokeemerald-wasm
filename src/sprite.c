@@ -420,17 +420,17 @@ void BuildOamBuffer(void)
 }
 
 #if WASM
-static s16 CalcSpriteSortY(const struct Sprite *sprite)
+static s16 CalcSpriteSortY(u64 oam)
 {
-    s16 y = sprite->oam.y;
+    s16 y = oam & 0xFF;
     if (y < 129)
         return y;
     if (y >= DISPLAY_HEIGHT)
         return y - 256;
-    if (sprite->oam.affineMode == ST_OAM_AFFINE_DOUBLE
-     && sprite->oam.size == ST_OAM_SIZE_3)
+    if (((oam >> 8) & 3) == ST_OAM_AFFINE_DOUBLE
+     && ((oam >> 30) & 3) == ST_OAM_SIZE_3)
     {
-        u32 shape = sprite->oam.shape;
+        u32 shape = (oam >> 14) & 3;
         if (shape == ST_OAM_SQUARE || shape == ST_OAM_V_RECTANGLE)
             return y - 256;
     }
@@ -450,6 +450,7 @@ void UpdateOamCoords(void)
     for (i = 0; i < MAX_SPRITES; i++)
     {
         struct Sprite *sprite = &gSprites[i];
+        u64 oam;
         u32 key;
 
         if (sprite->inUse && !sprite->invisible)
@@ -466,8 +467,9 @@ void UpdateOamCoords(void)
             sprite->oam.y = y;
         }
 
-        key = ((u32)(sprite->subpriority | (sprite->oam.priority << 8)) << 16)
-                | (u16)(32768 - CalcSpriteSortY(sprite));
+        __builtin_memcpy(&oam, &sprite->oam, sizeof(oam));
+        key = ((u32)(sprite->subpriority | (((oam >> 42) & 3) << 8)) << 16)
+                | (u16)(32768 - CalcSpriteSortY(oam));
         if (key != sPrevSortKey[i])
         {
             sChangedSprites[sChangedSpriteCount++] = i;
