@@ -301,6 +301,12 @@ static u8 sChangedSprites[MAX_SPRITES];
 static u8 sChangedSpriteCount;
 static bool8 sSortDirty;
 static bool8 sSpriteOrderValid;
+#if WASM
+static u64 sVisibleSpriteMask;
+static u8 sVisibleSpriteOrder[MAX_SPRITES];
+static u8 sVisibleSpriteCount;
+static bool8 sVisibleSpriteOrderDirty;
+#endif
 
 void ResetSpriteData(void)
 {
@@ -384,6 +390,9 @@ static s16 CalcSpriteSortY(const struct Sprite *sprite)
 void UpdateOamCoords(void)
 {
     u8 i;
+#if WASM
+    u64 visibleSpriteMask = 0;
+#endif
     sSortDirty = !sSpriteOrderValid;
     sChangedSpriteCount = 0;
     for (i = 0; i < MAX_SPRITES; i++)
@@ -393,6 +402,9 @@ void UpdateOamCoords(void)
 
         if (sprite->inUse && !sprite->invisible)
         {
+#if WASM
+            visibleSpriteMask |= (u64)1 << i;
+#endif
             s32 x = sprite->x + sprite->x2 + sprite->centerToCornerVecX;
             s32 y = sprite->y + sprite->y2 + sprite->centerToCornerVecY;
             if (sprite->coordOffsetEnabled)
@@ -413,6 +425,13 @@ void UpdateOamCoords(void)
             sSortKey[i] = key;
         }
     }
+#if WASM
+    if (visibleSpriteMask != sVisibleSpriteMask)
+    {
+        sVisibleSpriteMask = visibleSpriteMask;
+        sVisibleSpriteOrderDirty = TRUE;
+    }
+#endif
 
     if (sSpriteOrderValid)
     {
@@ -457,6 +476,9 @@ void SortSprites(void)
     for (i = 0; i < MAX_SPRITES; i++)
         sSpriteOrderPos[sSpriteOrder[i]] = i;
     sSpriteOrderValid = TRUE;
+#if WASM
+    sVisibleSpriteOrderDirty = TRUE;
+#endif
 }
 
 #if WASM
@@ -560,6 +582,27 @@ void AddSpritesToOamBuffer(void)
     u8 i = 0;
     u8 oamIndex = 0;
 
+#if WASM
+    if (sVisibleSpriteOrderDirty)
+    {
+        sVisibleSpriteCount = 0;
+        for (i = 0; i < MAX_SPRITES; i++)
+        {
+            u8 spriteId = sSpriteOrder[i];
+            if ((sVisibleSpriteMask & ((u64)1 << spriteId)) != 0)
+                sVisibleSpriteOrder[sVisibleSpriteCount++] = spriteId;
+        }
+        sVisibleSpriteOrderDirty = FALSE;
+        i = 0;
+    }
+
+    while (i < sVisibleSpriteCount)
+    {
+        if (AddSpriteToOamBuffer(&gSprites[sVisibleSpriteOrder[i]], &oamIndex))
+            return;
+        i++;
+    }
+#else
     while (i < MAX_SPRITES)
     {
         struct Sprite *sprite = &gSprites[sSpriteOrder[i]];
@@ -567,6 +610,7 @@ void AddSpritesToOamBuffer(void)
             return;
         i++;
     }
+#endif
 
     while (oamIndex < gOamLimit)
     {
