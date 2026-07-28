@@ -306,6 +306,7 @@ static u64 sVisibleSpriteMask;
 static u8 sVisibleSpriteOrder[MAX_SPRITES];
 static u8 sVisibleSpriteCount;
 static bool8 sVisibleSpriteOrderDirty;
+static u64 sActiveSpriteMask;
 #endif
 
 void ResetSpriteData(void)
@@ -327,8 +328,19 @@ void AnimateSprites(void)
 {
     u8 i;
     bool8 affineDisabled = gAffineAnimsDisabled;
+#if WASM
+    u8 nextSpriteId = 0;
+    while (nextSpriteId < MAX_SPRITES)
+    {
+        u64 remainingSprites = sActiveSpriteMask & (~(u64)0 << nextSpriteId);
+        if (remainingSprites == 0)
+            break;
+        i = __builtin_ctzll(remainingSprites);
+        nextSpriteId = i + 1;
+#else
     for (i = 0; i < MAX_SPRITES; i++)
     {
+#endif
         struct Sprite *sprite = &gSprites[i];
 
         if (sprite->inUse)
@@ -706,6 +718,9 @@ u8 CreateSpriteAt(u8 index, const struct SpriteTemplate *template, s16 x, s16 y,
     if (template->paletteTag != TAG_NONE)
         sprite->oam.paletteNum = IndexOfSpritePaletteTag(template->paletteTag);
 
+#if WASM
+    sActiveSpriteMask |= (u64)1 << index;
+#endif
     return index;
 }
 
@@ -802,6 +817,11 @@ void SetOamMatrix(u8 matrixNum, u16 a, u16 b, u16 c, u16 d)
 
 void ResetSprite(struct Sprite *sprite)
 {
+#if WASM
+    u32 spriteId = sprite - gSprites;
+    if (spriteId < MAX_SPRITES)
+        sActiveSpriteMask &= ~((u64)1 << spriteId);
+#endif
     *sprite = sDummySprite;
 }
 
