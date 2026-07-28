@@ -658,6 +658,7 @@ enum
     SPRITE_SORT_CHECK_RESET = 1 << 0,
     SPRITE_SORT_CHECK_INACTIVE = 1 << 1,
     SPRITE_SORT_CHECK_INVISIBLE = 1 << 2,
+    SPRITE_SORT_CHECK_COPY_ACTIVE = 1 << 3,
 };
 
 static void SetSpriteSortCheckSprite(u8 spriteId, u8 subpriority)
@@ -731,6 +732,14 @@ u32 WasmCheckSpriteSort(void)
     SortSprites();
     if (!SpriteSortCheckStartsWith(1, 0))
         failures |= SPRITE_SORT_CHECK_INVISIBLE;
+
+    // Restoring gSprites must also restore the active-slot cache.
+    ResetSpriteData();
+    SetSpriteSortCheckSprite(3, 0);
+    sActiveSpriteMask = ~(u64)0;
+    CopyToSprites((u8 *)gSprites);
+    if (sActiveSpriteMask != ((u64)1 << 3))
+        failures |= SPRITE_SORT_CHECK_COPY_ACTIVE;
 
     return failures;
 }
@@ -1142,6 +1151,14 @@ void CopyToSprites(u8 *src)
         src++;
         dest++;
     }
+#if WASM
+    sActiveSpriteMask = 0;
+    for (i = 0; i < MAX_SPRITES; i++)
+    {
+        if (gSprites[i].inUse)
+            sActiveSpriteMask |= (u64)1 << i;
+    }
+#endif
 }
 
 void ResetAllSprites(void)
