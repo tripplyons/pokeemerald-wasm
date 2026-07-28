@@ -436,6 +436,8 @@ static s16 CalcSpriteSortY(const struct Sprite *sprite)
     }
     return y;
 }
+
+extern void WasmCopyOamMatrices(const struct OamMatrix *matrices, struct OamData *oamBuffer);
 #endif
 
 void UpdateOamCoords(void)
@@ -747,6 +749,9 @@ u32 WasmCheckSpriteSort(void)
 
 void CopyMatricesToOamBuffer(void)
 {
+#if WASM
+    WasmCopyOamMatrices(gOamMatrices, gMain.oamBuffer);
+#else
     u8 i;
     for (i = 0; i < OAM_MATRIX_COUNT; i++)
     {
@@ -756,6 +761,7 @@ void CopyMatricesToOamBuffer(void)
         gMain.oamBuffer[base + 2].affineParam = gOamMatrices[i].c;
         gMain.oamBuffer[base + 3].affineParam = gOamMatrices[i].d;
     }
+#endif
 }
 
 void AddSpritesToOamBuffer(void)

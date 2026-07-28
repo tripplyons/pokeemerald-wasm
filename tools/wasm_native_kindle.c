@@ -233,6 +233,32 @@ static void obj_affine_set(struct w2c_env *env, uint32_t src, uint32_t dst, uint
     }
 }
 
+static void copy_oam_matrices(struct w2c_env *env, uint32_t src, uint32_t dest)
+{
+    uint8_t *mem = memory_data(env);
+    uint8_t *restrict source;
+    uint8_t *restrict output;
+
+    if (!valid_range(env, src, 32 * 8) || !valid_range(env, dest, 128 * 8))
+        return;
+
+    source = mem + src;
+    output = mem + dest + 6;
+    for (uint32_t matrix = 0; matrix < 32; matrix++) {
+        uint16_t value;
+        memcpy(&value, source, sizeof(value));
+        memcpy(output, &value, sizeof(value));
+        memcpy(&value, source + 2, sizeof(value));
+        memcpy(output + 8, &value, sizeof(value));
+        memcpy(&value, source + 4, sizeof(value));
+        memcpy(output + 16, &value, sizeof(value));
+        memcpy(&value, source + 6, sizeof(value));
+        memcpy(output + 24, &value, sizeof(value));
+        source += 8;
+        output += 32;
+    }
+}
+
 static uint32_t hash_bytes(const uint8_t *bytes, size_t size)
 {
     uint32_t hash = 2166136261u;
@@ -955,6 +981,7 @@ u32 w2c_env_Div(struct w2c_env *env, u32 num, u32 den) { (void)env; return den ?
 void w2c_env_LZ77UnCompVram(struct w2c_env *env, u32 src, u32 dest) { lz77(env, src, dest); }
 void w2c_env_LZ77UnCompWram(struct w2c_env *env, u32 src, u32 dest) { lz77(env, src, dest); }
 void w2c_env_ObjAffineSet(struct w2c_env *env, u32 src, u32 dest, u32 count, u32 offset) { obj_affine_set(env, src, dest, count, offset); }
+void w2c_env_WasmCopyOamMatrices(struct w2c_env *env, u32 src, u32 dest) { copy_oam_matrices(env, src, dest); }
 void w2c_env_RLUnCompVram(struct w2c_env *env, u32 src, u32 dest) { rl(env, src, dest); }
 void w2c_env_RLUnCompWram(struct w2c_env *env, u32 src, u32 dest) { rl(env, src, dest); }
 u32 w2c_env_Sqrt(struct w2c_env *env, u32 value) { (void)env; return (u32)sqrt((double)value); }

@@ -728,6 +728,17 @@ function objAffineSet(src, dest, count, offset) {
   }
 }
 
+function copyOamMatrices(src, dest) {
+  for (let matrix = 0; matrix < 32; matrix++) {
+    const source = (src + matrix * 8) >> 1;
+    const output = (dest + matrix * 32 + 6) >> 1;
+    u16[output] = u16[source];
+    u16[output + 4] = u16[source + 1];
+    u16[output + 8] = u16[source + 2];
+    u16[output + 12] = u16[source + 3];
+  }
+}
+
 function importsFor(module) {
   const env = {};
   for (const item of WebAssembly.Module.imports(module)) {
@@ -742,6 +753,7 @@ function importsFor(module) {
         case 'RLUnCompVram': return rl(args[0], args[1]);
         case 'BgAffineSet': return bgAffineSet(args[0], args[1], args[2]);
         case 'ObjAffineSet': return objAffineSet(args[0], args[1], args[2], args[3]);
+        case 'WasmCopyOamMatrices': return copyOamMatrices(args[0], args[1]);
         case 'Div': return args[1] ? (args[0] / args[1]) | 0 : 0;
         case 'Sqrt': return Math.sqrt(args[0]) | 0;
         case 'strcmp': return readCString(args[0]).localeCompare(readCString(args[1]));
