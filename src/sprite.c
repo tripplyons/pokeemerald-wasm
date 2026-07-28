@@ -374,16 +374,17 @@ void BuildOamBuffer(void)
 static s16 CalcSpriteSortY(const struct Sprite *sprite)
 {
     s16 y = sprite->oam.y;
-    s16 wrapThreshold = DISPLAY_HEIGHT;
+    if (y < 129)
+        return y;
+    if (y >= DISPLAY_HEIGHT)
+        return y - 256;
     if (sprite->oam.affineMode == ST_OAM_AFFINE_DOUBLE
      && sprite->oam.size == ST_OAM_SIZE_3)
     {
         u32 shape = sprite->oam.shape;
         if (shape == ST_OAM_SQUARE || shape == ST_OAM_V_RECTANGLE)
-            wrapThreshold = 129;
+            return y - 256;
     }
-    if (y >= wrapThreshold)
-        y = y - 256;
     return y;
 }
 
