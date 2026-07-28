@@ -8,7 +8,11 @@
 # The benchmark/oracle files are immutable; optimizing them is cheating.
 set -euo pipefail
 
-MAIN_REPO="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve the primary worktree through Git instead of the script path. The
+# script may be invoked from an arm's own .auto directory, but every arm must
+# seed from the same build cache and contend for the same benchmark lock.
+MAIN_REPO="$(git worktree list --porcelain | awk 'NR == 1 { sub(/^worktree /, ""); print; exit }')"
+BUILD_CACHE="$MAIN_REPO/build"
 GOLDEN=tools/native/bench_golden.json
 SCRIPT=tools/wasm_replays/mudkip_starter.txt
 BENCH=build/native/pokeemerald-bench
@@ -27,9 +31,9 @@ fi
 # --- Build cache: reuse the main checkout's generated assets/wasm/native -----
 if [ "$(pwd)" != "$MAIN_REPO" ]; then
   for d in assets wasm native; do
-    if [ -d "$MAIN_REPO/build/$d" ] && [ ! -d "build/$d" ]; then
+    if [ -d "$BUILD_CACHE/$d" ] && [ ! -d "build/$d" ]; then
       mkdir -p build
-      cp -R "$MAIN_REPO/build/$d" "build/$d"
+      cp -R "$BUILD_CACHE/$d" "build/$d"
     fi
   done
   if [ -d build ]; then
@@ -87,14 +91,28 @@ rm -f "$BUILD_LOG"
 
 # --- Serialize the timed region across concurrent arms -----------------------
 LOCK="$MAIN_REPO/.auto/.benchlock"
+lock_acquired=0
 for _ in $(seq 1 600); do
-  if mkdir "$LOCK" 2>/dev/null; then break; fi
+  if mkdir "$LOCK" 2>/dev/null; then
+    lock_acquired=1
+    break
+  fi
   sleep 0.5
 done
-trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+
+if [ "$lock_acquired" -ne 1 ]; then
+  echo "METRIC fps=0"
+  echo "timed out waiting for benchmark lock: $LOCK" >&2
+  exit 1
+fi
+
+release_lock() {
+  rmdir "$LOCK" 2>/dev/null || true
+}
+trap release_lock EXIT
 
 OUT="$("$BENCH" --script "$SCRIPT" --golden "$GOLDEN" --passes 3 2>/dev/null)" || OUT=""
-rmdir "$LOCK" 2>/dev/null || true
+release_lock
 trap - EXIT
 
 if [ -z "$OUT" ]; then
