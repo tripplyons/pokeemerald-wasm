@@ -27,6 +27,16 @@ if [[ -n "$changed" ]]; then
   exit 1
 fi
 
+BUILD_LOG="$(mktemp /tmp/autoresearch_checks_build.XXXXXX)"
+trap 'rm -f "$BUILD_LOG"' EXIT
+if ! make NATIVE_CC=clang native-bench >"$BUILD_LOG" 2>&1; then
+  echo "checks: candidate benchmark build failed:" >&2
+  tail -25 "$BUILD_LOG" >&2
+  exit 1
+fi
+rm -f "$BUILD_LOG"
+trap - EXIT
+
 OUT="$(./build/native/pokeemerald-bench --script tools/wasm_replays/mudkip_starter.txt --golden tools/native/bench_golden.json --passes 2 2>/dev/null)" || OUT=""
 python3 - "$OUT" <<'PYEOF'
 import json, sys
