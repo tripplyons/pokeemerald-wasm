@@ -189,19 +189,31 @@ static void bg_affine_set(struct w2c_env *env, uint32_t src, uint32_t dst, uint3
 
 static void obj_affine_set(struct w2c_env *env, uint32_t src, uint32_t dst, uint32_t count, uint32_t offset)
 {
+    uint8_t *mem = memory_data(env);
+    const uint8_t *source = mem + src;
+    uint8_t *output = mem + dst;
+
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t s = src + i * 6;
-        uint32_t d = dst + i * offset * 4;
-        int16_t xScale = read_s16(env, s);
-        int16_t yScale = read_s16(env, s + 2);
-        uint16_t rotation = read_u16(env, s + 4);
+        int16_t xScale;
+        int16_t yScale;
+        uint16_t rotation;
+        int16_t value;
+        memcpy(&xScale, source, sizeof(xScale));
+        memcpy(&yScale, source + 2, sizeof(yScale));
+        memcpy(&rotation, source + 4, sizeof(rotation));
         double angle = rotation * M_PI * 2.0 / 0x10000;
         double sn = sin(angle) * 256.0;
         double cs = cos(angle) * 256.0;
-        write_s16(env, d, (int32_t)(cs * xScale / 256.0));
-        write_s16(env, d + offset, (int32_t)(-sn * xScale / 256.0));
-        write_s16(env, d + offset * 2, (int32_t)(sn * yScale / 256.0));
-        write_s16(env, d + offset * 3, (int32_t)(cs * yScale / 256.0));
+        value = (int32_t)(cs * xScale / 256.0);
+        memcpy(output, &value, sizeof(value));
+        value = (int32_t)(-sn * xScale / 256.0);
+        memcpy(output + offset, &value, sizeof(value));
+        value = (int32_t)(sn * yScale / 256.0);
+        memcpy(output + offset * 2, &value, sizeof(value));
+        value = (int32_t)(cs * yScale / 256.0);
+        memcpy(output + offset * 3, &value, sizeof(value));
+        source += 6;
+        output += offset * 4;
     }
 }
 
