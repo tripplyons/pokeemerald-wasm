@@ -47,6 +47,9 @@ struct OamDimensions
 };
 
 static void UpdateOamCoords(void);
+#if !WASM
+static void BuildSpritePriorities(void);
+#endif
 static void SortSprites(void);
 static void CopyMatricesToOamBuffer(void);
 static void AddSpritesToOamBuffer(void);
@@ -270,11 +273,13 @@ static const struct OamDimensions sOamDimensions[3][4] =
 static u16 sSpriteTileRangeTags[MAX_SPRITES];
 static u16 sSpriteTileRanges[MAX_SPRITES * 2];
 static struct AffineAnimState sAffineAnimStates[OAM_MATRIX_COUNT];
+#if WASM
 static struct OamMatrix sEndMatrix[OAM_MATRIX_COUNT];
 static s16 sEndXScale[OAM_MATRIX_COUNT];
 static s16 sEndYScale[OAM_MATRIX_COUNT];
 static u16 sEndRotation[OAM_MATRIX_COUNT];
 static bool8 sEndValid[OAM_MATRIX_COUNT];
+#endif
 static u16 sSpritePaletteTags[16];
 
 // iwram common
@@ -282,6 +287,9 @@ COMMON_DATA u32 gOamMatrixAllocBitmap = 0;
 COMMON_DATA u8 gReservedSpritePaletteCount = 0;
 
 EWRAM_DATA struct Sprite gSprites[MAX_SPRITES + 1] = {0};
+#if !WASM
+EWRAM_DATA static u16 sSpritePriorities[MAX_SPRITES] = {0};
+#endif
 EWRAM_DATA static u8 sSpriteOrder[MAX_SPRITES] = {0};
 EWRAM_DATA static bool8 sShouldProcessSpriteCopyRequests = 0;
 EWRAM_DATA static u8 sSpriteCopyRequestCount = 0;
@@ -294,6 +302,7 @@ EWRAM_DATA s16 gSpriteCoordOffsetY = 0;
 EWRAM_DATA struct OamMatrix gOamMatrices[OAM_MATRIX_COUNT] = {0};
 EWRAM_DATA bool8 gAffineAnimsDisabled = FALSE;
 
+#if WASM
 static u32 sSortKey[MAX_SPRITES];
 static u32 sPrevSortKey[MAX_SPRITES];
 static u8 sSpriteOrderPos[MAX_SPRITES];
@@ -301,7 +310,6 @@ static u8 sChangedSprites[MAX_SPRITES];
 static u8 sChangedSpriteCount;
 static bool8 sSortDirty;
 static bool8 sSpriteOrderValid;
-#if WASM
 static u64 sVisibleSpriteMask;
 static u8 sVisibleSpriteOrder[MAX_SPRITES];
 static u8 sVisibleSpriteCount;
@@ -334,14 +342,16 @@ void ResetSpriteData(void)
     AllocSpriteTiles(0);
     gSpriteCoordOffsetX = 0;
     gSpriteCoordOffsetY = 0;
+#if WASM
     sSpriteOrderValid = FALSE;
+#endif
 }
 
 void AnimateSprites(void)
 {
     u8 i;
-    bool8 affineDisabled = gAffineAnimsDisabled;
 #if WASM
+    bool8 affineDisabled = gAffineAnimsDisabled;
     u8 nextSpriteId = 0;
     while (nextSpriteId < MAX_SPRITES)
     {
@@ -350,10 +360,6 @@ void AnimateSprites(void)
             break;
         i = __builtin_ctzll(remainingSprites);
         nextSpriteId = i + 1;
-#else
-    for (i = 0; i < MAX_SPRITES; i++)
-    {
-#endif
         struct Sprite *sprite = &gSprites[i];
 
         if (sprite->inUse)
@@ -381,12 +387,29 @@ void AnimateSprites(void)
             }
         }
     }
+#else
+    for (i = 0; i < MAX_SPRITES; i++)
+    {
+        struct Sprite *sprite = &gSprites[i];
+
+        if (sprite->inUse)
+        {
+            sprite->callback(sprite);
+
+            if (sprite->inUse)
+                AnimateSprite(sprite);
+        }
+    }
+#endif
 }
 
 void BuildOamBuffer(void)
 {
     u8 temp;
     UpdateOamCoords();
+#if !WASM
+    BuildSpritePriorities();
+#endif
     SortSprites();
     temp = gMain.oamLoadDisabled;
     gMain.oamLoadDisabled = TRUE;
@@ -396,6 +419,7 @@ void BuildOamBuffer(void)
     sShouldProcessSpriteCopyRequests = TRUE;
 }
 
+#if WASM
 static s16 CalcSpriteSortY(const struct Sprite *sprite)
 {
     s16 y = sprite->oam.y;
@@ -412,13 +436,13 @@ static s16 CalcSpriteSortY(const struct Sprite *sprite)
     }
     return y;
 }
+#endif
 
 void UpdateOamCoords(void)
 {
     u8 i;
 #if WASM
     u64 visibleSpriteMask = 0;
-#endif
     sSortDirty = !sSpriteOrderValid;
     sChangedSpriteCount = 0;
     for (i = 0; i < MAX_SPRITES; i++)
@@ -428,9 +452,7 @@ void UpdateOamCoords(void)
 
         if (sprite->inUse && !sprite->invisible)
         {
-#if WASM
             visibleSpriteMask |= (u64)1 << i;
-#endif
             s32 x = sprite->x + sprite->x2 + sprite->centerToCornerVecX;
             s32 y = sprite->y + sprite->y2 + sprite->centerToCornerVecY;
             if (sprite->coordOffsetEnabled)
@@ -451,13 +473,11 @@ void UpdateOamCoords(void)
             sSortKey[i] = key;
         }
     }
-#if WASM
     if (visibleSpriteMask != sVisibleSpriteMask)
     {
         sVisibleSpriteMask = visibleSpriteMask;
         sVisibleSpriteOrderDirty = TRUE;
     }
-#endif
 
     if (sSpriteOrderValid)
     {
@@ -473,11 +493,44 @@ void UpdateOamCoords(void)
             }
         }
     }
+#else
+    for (i = 0; i < MAX_SPRITES; i++)
+    {
+        struct Sprite *sprite = &gSprites[i];
+        if (sprite->inUse && !sprite->invisible)
+        {
+            if (sprite->coordOffsetEnabled)
+            {
+                sprite->oam.x = sprite->x + sprite->x2 + sprite->centerToCornerVecX + gSpriteCoordOffsetX;
+                sprite->oam.y = sprite->y + sprite->y2 + sprite->centerToCornerVecY + gSpriteCoordOffsetY;
+            }
+            else
+            {
+                sprite->oam.x = sprite->x + sprite->x2 + sprite->centerToCornerVecX;
+                sprite->oam.y = sprite->y + sprite->y2 + sprite->centerToCornerVecY;
+            }
+        }
+    }
+#endif
 }
+
+#if !WASM
+void BuildSpritePriorities(void)
+{
+    u16 i;
+    for (i = 0; i < MAX_SPRITES; i++)
+    {
+        struct Sprite *sprite = &gSprites[i];
+        u16 priority = sprite->subpriority | (sprite->oam.priority << 8);
+        sSpritePriorities[i] = priority;
+    }
+}
+#endif
 
 void SortSprites(void)
 {
     u8 i;
+#if WASM
     if (!sSortDirty)
         return;
     for (i = 1; i < MAX_SPRITES; i++)
@@ -502,8 +555,100 @@ void SortSprites(void)
     for (i = 0; i < MAX_SPRITES; i++)
         sSpriteOrderPos[sSpriteOrder[i]] = i;
     sSpriteOrderValid = TRUE;
-#if WASM
     sVisibleSpriteOrderDirty = TRUE;
+#else
+    for (i = 1; i < MAX_SPRITES; i++)
+    {
+        u8 j = i;
+        struct Sprite *sprite1 = &gSprites[sSpriteOrder[i - 1]];
+        struct Sprite *sprite2 = &gSprites[sSpriteOrder[i]];
+        u16 sprite1Priority = sSpritePriorities[sSpriteOrder[i - 1]];
+        u16 sprite2Priority = sSpritePriorities[sSpriteOrder[i]];
+        s16 sprite1Y = sprite1->oam.y;
+        s16 sprite2Y = sprite2->oam.y;
+
+        if (sprite1Y >= DISPLAY_HEIGHT)
+            sprite1Y = sprite1Y - 256;
+
+        if (sprite2Y >= DISPLAY_HEIGHT)
+            sprite2Y = sprite2Y - 256;
+
+        if (sprite1->oam.affineMode == ST_OAM_AFFINE_DOUBLE
+         && sprite1->oam.size == ST_OAM_SIZE_3)
+        {
+            u32 shape = sprite1->oam.shape;
+            if (shape == ST_OAM_SQUARE || shape == ST_OAM_V_RECTANGLE)
+            {
+                if (sprite1Y > 128)
+                    sprite1Y = sprite1Y - 256;
+            }
+        }
+
+        if (sprite2->oam.affineMode == ST_OAM_AFFINE_DOUBLE
+         && sprite2->oam.size == ST_OAM_SIZE_3)
+        {
+            u32 shape = sprite2->oam.shape;
+            if (shape == ST_OAM_SQUARE || shape == ST_OAM_V_RECTANGLE)
+            {
+                if (sprite2Y > 128)
+                    sprite2Y = sprite2Y - 256;
+            }
+        }
+
+        while (j > 0
+            && ((sprite1Priority > sprite2Priority)
+             || (sprite1Priority == sprite2Priority && sprite1Y < sprite2Y)))
+        {
+            u8 temp = sSpriteOrder[j];
+            sSpriteOrder[j] = sSpriteOrder[j - 1];
+            sSpriteOrder[j - 1] = temp;
+
+            // UB: If j equals 1, then j-- makes j equal 0.
+            // Then, sSpriteOrder[-1] gets accessed below.
+            // Although this doesn't result in a bug in the ROM,
+            // the behavior is undefined.
+            j--;
+#ifdef UBFIX
+            if (j == 0)
+                break;
+#endif
+
+            sprite1 = &gSprites[sSpriteOrder[j - 1]];
+            sprite2 = &gSprites[sSpriteOrder[j]];
+            sprite1Priority = sSpritePriorities[sSpriteOrder[j - 1]];
+            sprite2Priority = sSpritePriorities[sSpriteOrder[j]];
+            sprite1Y = sprite1->oam.y;
+            sprite2Y = sprite2->oam.y;
+
+            if (sprite1Y >= DISPLAY_HEIGHT)
+                sprite1Y = sprite1Y - 256;
+
+            if (sprite2Y >= DISPLAY_HEIGHT)
+                sprite2Y = sprite2Y - 256;
+
+            if (sprite1->oam.affineMode == ST_OAM_AFFINE_DOUBLE
+             && sprite1->oam.size == ST_OAM_SIZE_3)
+            {
+                u32 shape = sprite1->oam.shape;
+                if (shape == ST_OAM_SQUARE || shape == ST_OAM_V_RECTANGLE)
+                {
+                    if (sprite1Y > 128)
+                        sprite1Y = sprite1Y - 256;
+                }
+            }
+
+            if (sprite2->oam.affineMode == ST_OAM_AFFINE_DOUBLE
+             && sprite2->oam.size == ST_OAM_SIZE_3)
+            {
+                u32 shape = sprite2->oam.shape;
+                if (shape == ST_OAM_SQUARE || shape == ST_OAM_V_RECTANGLE)
+                {
+                    if (sprite2Y > 128)
+                        sprite2Y = sprite2Y - 256;
+                }
+            }
+        }
+    }
 #endif
 }
 
@@ -521,9 +666,7 @@ static void SetSpriteSortCheckSprite(u8 spriteId, u8 subpriority)
 
     ResetSprite(sprite);
     sprite->inUse = TRUE;
-#if WASM
     WasmSetSpriteActive(spriteId, TRUE);
-#endif
     sprite->subpriority = subpriority;
     sprite->oam.priority = 0;
     sprite->x = 0;
@@ -1254,8 +1397,12 @@ void ContinueAffineAnim(struct Sprite *sprite)
         else
         {
             s16 type;
+#if !WASM
+            s16 funcIndex;
+#endif
             sAffineAnimStates[matrixNum].animCmdIndex++;
             type = sprite->affineAnims[sAffineAnimStates[matrixNum].animNum][sAffineAnimStates[matrixNum].animCmdIndex].type;
+#if WASM
             if (type >= 32765)
             {
                 switch (type - 32765)
@@ -1275,6 +1422,12 @@ void ContinueAffineAnim(struct Sprite *sprite)
             {
                 AffineAnimCmd_frame(matrixNum, sprite);
             }
+#else
+            funcIndex = 3;
+            if (type >= 32765)
+                funcIndex = type - 32765;
+            sAffineAnimCmdFuncs[funcIndex](matrixNum, sprite);
+#endif
         }
         if (sprite->anchored)
             UpdateSpriteMatrixAnchorPos(sprite, sprite->sAnchorX, sprite->sAnchorY);
@@ -1341,6 +1494,7 @@ void AffineAnimCmd_jump(u8 matrixNum, struct Sprite *sprite)
 
 void AffineAnimCmd_end(u8 matrixNum, struct Sprite *sprite)
 {
+#if WASM
     sprite->affineAnimEnded = TRUE;
     sAffineAnimStates[matrixNum].animCmdIndex--;
     if (sEndValid[matrixNum]
@@ -1364,6 +1518,12 @@ void AffineAnimCmd_end(u8 matrixNum, struct Sprite *sprite)
         sEndMatrix[matrixNum] = gOamMatrices[matrixNum];
         sEndValid[matrixNum] = TRUE;
     }
+#else
+    struct AffineAnimFrameCmd dummyFrameCmd = {0};
+    sprite->affineAnimEnded = TRUE;
+    sAffineAnimStates[matrixNum].animCmdIndex--;
+    ApplyAffineAnimFrameRelativeAndUpdateMatrix(matrixNum, &dummyFrameCmd);
+#endif
 }
 
 void AffineAnimCmd_frame(u8 matrixNum, struct Sprite *sprite)
