@@ -2116,37 +2116,16 @@ bool8 AddSubspritesToOamBuffer(struct Sprite *sprite, struct OamData *destOam, u
         {
             u16 x;
             u16 y;
-#if WASM
-            u32 subsprite;
-            u32 shape;
-            u32 size;
-            u32 tileOffset;
-            u32 priority;
-#endif
 
             if (*oamIndex >= gOamLimit)
                 return 1;
 
-#if WASM
-            __builtin_memcpy(&subsprite, &subspriteTable->subsprites[i], sizeof(subsprite));
-            x = (s8)subsprite;
-            y = (s8)(subsprite >> 8);
-            shape = (subsprite >> 16) & 3;
-            size = (subsprite >> 18) & 3;
-            tileOffset = (subsprite >> 20) & 0x3FF;
-            priority = subsprite >> 30;
-#else
             x = subspriteTable->subsprites[i].x;
             y = subspriteTable->subsprites[i].y;
-#endif
 
             if (hFlip)
             {
-#if WASM
-                s8 width = sOamDimensions[shape][size].width;
-#else
                 s8 width = sOamDimensions[subspriteTable->subsprites[i].shape][subspriteTable->subsprites[i].size].width;
-#endif
                 s16 right = x;
                 right += width;
                 x = right;
@@ -2155,11 +2134,7 @@ bool8 AddSubspritesToOamBuffer(struct Sprite *sprite, struct OamData *destOam, u
 
             if (vFlip)
             {
-#if WASM
-                s8 height = sOamDimensions[shape][size].height;
-#else
                 s8 height = sOamDimensions[subspriteTable->subsprites[i].shape][subspriteTable->subsprites[i].size].height;
-#endif
                 s16 bottom = y;
                 bottom += height;
                 y = bottom;
@@ -2175,14 +2150,14 @@ bool8 AddSubspritesToOamBuffer(struct Sprite *sprite, struct OamData *destOam, u
                          | ((u64)0x3 << 30)
                          | ((u64)0x3FF << 32));
             outputOam |= (u8)(baseY + y);
-            outputOam |= (u64)shape << 14;
+            outputOam |= (u64)subspriteTable->subsprites[i].shape << 14;
             outputOam |= ((u64)((s16)baseX + (s16)x) & 0x1FF) << 16;
-            outputOam |= (u64)size << 30;
-            outputOam |= ((u64)(tileNum + tileOffset) & 0x3FF) << 32;
+            outputOam |= (u64)subspriteTable->subsprites[i].size << 30;
+            outputOam |= ((u64)(tileNum + subspriteTable->subsprites[i].tileOffset) & 0x3FF) << 32;
             if (sprite->subspriteMode != SUBSPRITES_IGNORE_PRIORITY)
             {
                 outputOam &= ~((u64)0x3 << 42);
-                outputOam |= (u64)priority << 42;
+                outputOam |= (u64)subspriteTable->subsprites[i].priority << 42;
             }
             __builtin_memcpy(&destOam[i], &outputOam, sizeof(outputOam));
 #else
