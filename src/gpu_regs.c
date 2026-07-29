@@ -138,6 +138,42 @@ void SetGpuReg(u8 regOffset, u16 value)
     }
 }
 
+#if WASM
+void SetFieldBgOffsets(u16 horizontal, u16 vertical)
+{
+    u16 vcount;
+
+    GPU_REG_BUF(REG_OFFSET_BG1HOFS) = horizontal;
+    GPU_REG_BUF(REG_OFFSET_BG1VOFS) = vertical;
+    GPU_REG_BUF(REG_OFFSET_BG2HOFS) = horizontal;
+    GPU_REG_BUF(REG_OFFSET_BG2VOFS) = vertical;
+    GPU_REG_BUF(REG_OFFSET_BG3HOFS) = horizontal;
+    GPU_REG_BUF(REG_OFFSET_BG3VOFS) = vertical;
+
+    vcount = REG_VCOUNT & 0xFF;
+    if ((vcount >= 161 && vcount <= 225) || (REG_DISPCNT & DISPCNT_FORCED_BLANK))
+    {
+        CopyBufferedValueToGpuReg(REG_OFFSET_BG1HOFS);
+        CopyBufferedValueToGpuReg(REG_OFFSET_BG1VOFS);
+        CopyBufferedValueToGpuReg(REG_OFFSET_BG2HOFS);
+        CopyBufferedValueToGpuReg(REG_OFFSET_BG2VOFS);
+        CopyBufferedValueToGpuReg(REG_OFFSET_BG3HOFS);
+        CopyBufferedValueToGpuReg(REG_OFFSET_BG3VOFS);
+    }
+    else
+    {
+        sGpuRegBufferLocked = TRUE;
+        QueueGpuReg(REG_OFFSET_BG1HOFS);
+        QueueGpuReg(REG_OFFSET_BG1VOFS);
+        QueueGpuReg(REG_OFFSET_BG2HOFS);
+        QueueGpuReg(REG_OFFSET_BG2VOFS);
+        QueueGpuReg(REG_OFFSET_BG3HOFS);
+        QueueGpuReg(REG_OFFSET_BG3VOFS);
+        sGpuRegBufferLocked = FALSE;
+    }
+}
+#endif
+
 void SetGpuReg_ForcedBlank(u8 regOffset, u16 value)
 {
     if (regOffset < GPU_REG_BUF_SIZE)
