@@ -2100,8 +2100,6 @@ bool8 AddSubspritesToOamBuffer(struct Sprite *sprite, struct OamData *destOam, u
         u8 i;
 #if WASM
         u64 baseOam;
-        u64 outputOamBase;
-        bool8 useSubspritePriority;
 #endif
 
         tileNum = oam->tileNum;
@@ -2112,14 +2110,6 @@ bool8 AddSubspritesToOamBuffer(struct Sprite *sprite, struct OamData *destOam, u
         baseY = oam->y - sprite->centerToCornerVecY;
 #if WASM
         __builtin_memcpy(&baseOam, oam, sizeof(baseOam));
-        outputOamBase = baseOam & ~(((u64)0xFF << 0)
-                                  | ((u64)0x3 << 14)
-                                  | ((u64)0x1FF << 16)
-                                  | ((u64)0x3 << 30)
-                                  | ((u64)0x3FF << 32));
-        useSubspritePriority = sprite->subspriteMode != SUBSPRITES_IGNORE_PRIORITY;
-        if (useSubspritePriority)
-            outputOamBase &= ~((u64)0x3 << 42);
 #endif
 
         for (i = 0; i < subspriteCount; i++, (*oamIndex)++)
@@ -2152,15 +2142,23 @@ bool8 AddSubspritesToOamBuffer(struct Sprite *sprite, struct OamData *destOam, u
             }
 
 #if WASM
-            u64 outputOam = outputOamBase;
+            u64 outputOam = baseOam;
 
+            outputOam &= ~(((u64)0xFF << 0)
+                         | ((u64)0x3 << 14)
+                         | ((u64)0x1FF << 16)
+                         | ((u64)0x3 << 30)
+                         | ((u64)0x3FF << 32));
             outputOam |= (u8)(baseY + y);
             outputOam |= (u64)subspriteTable->subsprites[i].shape << 14;
             outputOam |= ((u64)((s16)baseX + (s16)x) & 0x1FF) << 16;
             outputOam |= (u64)subspriteTable->subsprites[i].size << 30;
             outputOam |= ((u64)(tileNum + subspriteTable->subsprites[i].tileOffset) & 0x3FF) << 32;
-            if (useSubspritePriority)
+            if (sprite->subspriteMode != SUBSPRITES_IGNORE_PRIORITY)
+            {
+                outputOam &= ~((u64)0x3 << 42);
                 outputOam |= (u64)subspriteTable->subsprites[i].priority << 42;
+            }
             __builtin_memcpy(&destOam[i], &outputOam, sizeof(outputOam));
 #else
             destOam[i] = *oam;
