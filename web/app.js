@@ -728,7 +728,14 @@ function objAffineSet(src, dest, count, offset) {
   }
 }
 
-function copyOamMatrices(src, dest) {
+function copyOamMatrices(src, dest, dummy, oamCount, oamLimit) {
+  const dummyWord0 = u32[dummy >> 2];
+  const dummyWord1 = u32[(dummy + 4) >> 2];
+  for (let entry = oamCount; entry < oamLimit; entry++) {
+    const output = (dest + entry * 8) >> 2;
+    u32[output] = dummyWord0;
+    u32[output + 1] = dummyWord1;
+  }
   for (let matrix = 0; matrix < 32; matrix++) {
     const source = (src + matrix * 8) >> 1;
     const output = (dest + matrix * 32 + 6) >> 1;
@@ -753,7 +760,7 @@ function importsFor(module) {
         case 'RLUnCompVram': return rl(args[0], args[1]);
         case 'BgAffineSet': return bgAffineSet(args[0], args[1], args[2]);
         case 'ObjAffineSet': return objAffineSet(args[0], args[1], args[2], args[3]);
-        case 'WasmCopyOamMatrices': return copyOamMatrices(args[0], args[1]);
+        case 'WasmCopyOamMatrices': return copyOamMatrices(args[0], args[1], args[2], args[3], args[4]);
         case 'Div': return args[1] ? (args[0] / args[1]) | 0 : 0;
         case 'Sqrt': return Math.sqrt(args[0]) | 0;
         case 'strcmp': return readCString(args[0]).localeCompare(readCString(args[1]));

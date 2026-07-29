@@ -314,6 +314,7 @@ static u64 sVisibleSpriteMask;
 static u8 sVisibleSpriteOrder[MAX_SPRITES];
 static u8 sVisibleSpriteCount;
 static bool8 sVisibleSpriteOrderDirty;
+static u8 sOamCount;
 static u64 sActiveSpriteMask;
 static u64 sSortActiveSpriteMask;
 #endif
@@ -438,7 +439,8 @@ static s16 CalcSpriteSortY(const struct Sprite *sprite)
     return y;
 }
 
-extern void WasmCopyOamMatrices(const struct OamMatrix *matrices, struct OamData *oamBuffer);
+extern void WasmCopyOamMatrices(const struct OamMatrix *matrices, struct OamData *oamBuffer,
+                                const struct OamData *dummyOam, u32 oamCount, u32 oamLimit);
 #endif
 
 void UpdateOamCoords(void)
@@ -762,7 +764,7 @@ u32 WasmCheckSpriteSort(void)
 void CopyMatricesToOamBuffer(void)
 {
 #if WASM
-    WasmCopyOamMatrices(gOamMatrices, gMain.oamBuffer);
+    WasmCopyOamMatrices(gOamMatrices, gMain.oamBuffer, &gDummyOamData, sOamCount, gOamLimit);
 #else
     u8 i;
     for (i = 0; i < OAM_MATRIX_COUNT; i++)
@@ -798,9 +800,13 @@ void AddSpritesToOamBuffer(void)
     while (i < sVisibleSpriteCount)
     {
         if (AddSpriteToOamBuffer(&gSprites[sVisibleSpriteOrder[i]], &oamIndex))
+        {
+            sOamCount = oamIndex;
             return;
+        }
         i++;
     }
+    sOamCount = oamIndex;
 #else
     while (i < MAX_SPRITES)
     {
@@ -811,11 +817,13 @@ void AddSpritesToOamBuffer(void)
     }
 #endif
 
+#if !WASM
     while (oamIndex < gOamLimit)
     {
         gMain.oamBuffer[oamIndex] = gDummyOamData;
         oamIndex++;
     }
+#endif
 }
 
 u8 CreateSprite(const struct SpriteTemplate *template, s16 x, s16 y, u8 subpriority)
