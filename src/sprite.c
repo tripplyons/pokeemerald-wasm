@@ -315,6 +315,7 @@ static u8 sVisibleSpriteOrder[MAX_SPRITES];
 static u8 sVisibleSpriteCount;
 static bool8 sVisibleSpriteOrderDirty;
 static u64 sActiveSpriteMask;
+static u64 sSortActiveSpriteMask;
 #endif
 
 #if WASM
@@ -445,16 +446,26 @@ void UpdateOamCoords(void)
     u8 i;
 #if WASM
     u64 visibleSpriteMask = 0;
+    u64 activeSpriteMask = sActiveSpriteMask;
+    u64 spritesToUpdate = activeSpriteMask | (activeSpriteMask ^ sSortActiveSpriteMask);
     sSortDirty = !sSpriteOrderValid;
     sChangedSpriteCount = 0;
-    for (i = 0; i < MAX_SPRITES; i++)
+    if (!sSpriteOrderValid)
+        spritesToUpdate = ~(u64)0;
+    while (spritesToUpdate != 0)
     {
-        struct Sprite *sprite = &gSprites[i];
+        u64 spriteBit;
+        struct Sprite *sprite;
         u32 key;
 
-        if (sprite->inUse && !sprite->invisible)
+        i = __builtin_ctzll(spritesToUpdate);
+        spriteBit = (u64)1 << i;
+        spritesToUpdate &= ~spriteBit;
+        sprite = &gSprites[i];
+
+        if ((activeSpriteMask & spriteBit) && !sprite->invisible)
         {
-            visibleSpriteMask |= (u64)1 << i;
+            visibleSpriteMask |= spriteBit;
             s32 x = sprite->x + sprite->x2 + sprite->centerToCornerVecX;
             s32 y = sprite->y + sprite->y2 + sprite->centerToCornerVecY;
             if (sprite->coordOffsetEnabled)
@@ -475,6 +486,7 @@ void UpdateOamCoords(void)
             sSortKey[i] = key;
         }
     }
+    sSortActiveSpriteMask = activeSpriteMask;
     if (visibleSpriteMask != sVisibleSpriteMask)
     {
         sVisibleSpriteMask = visibleSpriteMask;
