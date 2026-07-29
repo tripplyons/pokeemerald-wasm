@@ -343,6 +343,8 @@ $(WASM_OBJ_DIR)/sprite.o: Makefile
 $(WASM_OBJ_DIR)/sprite.o: WASM_OPT_FLAGS := -O3
 $(WASM_OBJ_DIR)/task.o: Makefile
 $(WASM_OBJ_DIR)/task.o: WASM_OPT_FLAGS := -O3
+$(WASM_OBJ_DIR)/tileset_anims.o: Makefile
+$(WASM_OBJ_DIR)/tileset_anims.o: WASM_OPT_FLAGS := -O3
 
 $(WASM_OBJ_DIR)/%.o: $(C_SUBDIR)/%.c
 	@mkdir -p $(dir $@)
