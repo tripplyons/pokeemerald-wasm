@@ -2098,6 +2098,9 @@ bool8 AddSubspritesToOamBuffer(struct Sprite *sprite, struct OamData *destOam, u
         u8 hFlip;
         u8 vFlip;
         u8 i;
+#if WASM
+        u64 baseOam;
+#endif
 
         tileNum = oam->tileNum;
         subspriteCount = subspriteTable->subspriteCount;
@@ -2105,6 +2108,9 @@ bool8 AddSubspritesToOamBuffer(struct Sprite *sprite, struct OamData *destOam, u
         vFlip = ((s32)oam->matrixNum >> 4) & 1;
         baseX = oam->x - sprite->centerToCornerVecX;
         baseY = oam->y - sprite->centerToCornerVecY;
+#if WASM
+        __builtin_memcpy(&baseOam, oam, sizeof(baseOam));
+#endif
 
         for (i = 0; i < subspriteCount; i++, (*oamIndex)++)
         {
@@ -2135,6 +2141,26 @@ bool8 AddSubspritesToOamBuffer(struct Sprite *sprite, struct OamData *destOam, u
                 y = ~y + 1;
             }
 
+#if WASM
+            u64 outputOam = baseOam;
+
+            outputOam &= ~(((u64)0xFF << 0)
+                         | ((u64)0x3 << 14)
+                         | ((u64)0x1FF << 16)
+                         | ((u64)0x3 << 30)
+                         | ((u64)0x3FF << 32));
+            outputOam |= (u8)(baseY + y);
+            outputOam |= (u64)subspriteTable->subsprites[i].shape << 14;
+            outputOam |= ((u64)((s16)baseX + (s16)x) & 0x1FF) << 16;
+            outputOam |= (u64)subspriteTable->subsprites[i].size << 30;
+            outputOam |= ((u64)(tileNum + subspriteTable->subsprites[i].tileOffset) & 0x3FF) << 32;
+            if (sprite->subspriteMode != SUBSPRITES_IGNORE_PRIORITY)
+            {
+                outputOam &= ~((u64)0x3 << 42);
+                outputOam |= (u64)subspriteTable->subsprites[i].priority << 42;
+            }
+            __builtin_memcpy(&destOam[i], &outputOam, sizeof(outputOam));
+#else
             destOam[i] = *oam;
             destOam[i].shape = subspriteTable->subsprites[i].shape;
             destOam[i].size = subspriteTable->subsprites[i].size;
@@ -2144,6 +2170,7 @@ bool8 AddSubspritesToOamBuffer(struct Sprite *sprite, struct OamData *destOam, u
 
             if (sprite->subspriteMode != SUBSPRITES_IGNORE_PRIORITY)
                 destOam[i].priority = subspriteTable->subsprites[i].priority;
+#endif
         }
     }
 
