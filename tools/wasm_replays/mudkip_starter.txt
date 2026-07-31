@@ -226,6 +226,7 @@
 4370 button a on
 4373 button a off
 4408 screenshot truck-clear
+4408 probe trainer-id-nonzero
 4408 button down on
 4488 button down off
 4518 button down on

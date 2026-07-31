@@ -56,6 +56,9 @@ const IntrFunc gIntrTableTemplate[] =
 };
 
 #define INTR_COUNT ((int)(sizeof(gIntrTableTemplate)/sizeof(IntrFunc)))
+#if WASM
+#define GBA_CYCLES_PER_FRAME 280896
+#endif
 
 static u16 sUnusedVar; // Never read
 
@@ -365,6 +368,13 @@ void SetSerialCallback(IntrCallback callback)
 
 static void VBlankIntr(void)
 {
+#if WASM
+    // Hardware timers advance independently on GBA. Approximate Timer 1 at
+    // frame boundaries so timing-based RNG seeds still vary with user input.
+    if (REG_TM1CNT_H & TIMER_ENABLE)
+        REG_TM1CNT_L = (u16)(REG_TM1CNT_L + GBA_CYCLES_PER_FRAME);
+#endif
+
     if (gWirelessCommType != 0)
         RfuVSync();
     else if (gLinkVSyncDisabled == FALSE)

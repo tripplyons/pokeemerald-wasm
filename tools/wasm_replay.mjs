@@ -12,7 +12,7 @@ const defaultOutputDir = 'wasm-replay-output';
 function usage() {
   console.error('usage: node tools/wasm_replay.mjs <events.txt> [output-dir] [--no-build] [--keep-browser]');
   console.error('event frame numbers are emulated game frames, not display frames');
-  console.error('events: screenshot [name], button <name> <on|off>, probe hblank-dma-win0h');
+  console.error('events: screenshot [name], button <name> <on|off>, probe <hblank-dma-win0h|trainer-id-nonzero>');
   process.exit(2);
 }
 
@@ -46,8 +46,8 @@ function parseEvents(text) {
     }
 
     if (fields[1] === 'probe') {
-      if (fields.length !== 3 || fields[2] !== 'hblank-dma-win0h') {
-        throw new Error(`${index + 1}: expected "<frame> probe hblank-dma-win0h"`);
+      if (fields.length !== 3 || !['hblank-dma-win0h', 'trainer-id-nonzero'].includes(fields[2])) {
+        throw new Error(`${index + 1}: expected "<frame> probe <hblank-dma-win0h|trainer-id-nonzero>"`);
       }
       events.push({ frame, type: 'probe', name: fields[2] });
       continue;
@@ -213,6 +213,13 @@ async function saveScreenshot(cdp, outputDir, event) {
 }
 
 async function runProbe(cdp, event) {
+  if (event.name === 'trainer-id-nonzero') {
+    const state = await evaluate(cdp, `window.pokeemerald.automation.state()`);
+    if (state.trainerId === 0)
+      throw new Error(`unexpected zero trainer ID at frame ${event.frame}`);
+    return { frame: event.frame, name: event.name, result: state.trainerId };
+  }
+
   const result = await evaluate(cdp, `window.pokeemerald.automation.hblankDmaWin0HProbe()`);
   const stoppedControls = { fixed: 0x0040, reload: 0x0060 };
   for (const mode of ['fixed', 'reload']) {

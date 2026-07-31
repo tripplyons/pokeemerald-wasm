@@ -43,6 +43,7 @@ const SAVE_BLOCK1_SIZE = 0x3d8c;
 const LEGACY_SAVE_BLOCK2_SIZE = 0x0f08;
 const LEGACY_SAVE_BLOCK1_SIZE = 0x3c44;
 const SAVE_BLOCK2_ENCRYPTION_KEY_OFFSET = 0x0ac;
+const SAVE_BLOCK2_TRAINER_ID_OFFSET = 0x00a;
 const SAVE_BLOCK1_COINS_OFFSET = 0x494;
 const SAVE_BAG_POCKETS = [
   [0x560, 30, 99],
@@ -1023,11 +1024,13 @@ function hblankDmaWin0HProbe() {
 
 function automationState() {
   const saveBlock1 = readU32(instance.exports.gSaveBlock1Ptr.value);
+  const saveBlock2 = readU32(instance.exports.gSaveBlock2Ptr.value);
   const playerAvatar = instance.exports.gPlayerAvatar.value;
   const objectEventId = u8[playerAvatar + 5];
   const objectEvent = instance.exports.gObjectEvents.value + objectEventId * 0x24;
   return {
     frame: currentFrame,
+    trainerId: u16[(saveBlock2 + SAVE_BLOCK2_TRAINER_ID_OFFSET) >> 1],
     x: readS16(saveBlock1),
     y: readS16(saveBlock1 + 2),
     mapGroup: u8[saveBlock1 + 4],
