@@ -8,6 +8,7 @@
 #include "battle_message.h"
 #include "battle_setup.h"
 #include "battle_tv.h"
+#include "battle_util.h"
 #include "bg.h"
 #include "data.h"
 #include "item.h"
@@ -28,6 +29,9 @@
 #include "text.h"
 #include "util.h"
 #include "window.h"
+#if WASM
+#include "wasm_battle_shortcuts.h"
+#endif
 #include "constants/battle_anim.h"
 #include "constants/items.h"
 #include "constants/moves.h"
@@ -233,6 +237,34 @@ static void CompleteOnBankSpritePosX_0(void)
 static void HandleInputChooseAction(void)
 {
     u16 itemId = gBattleBufferA[gActiveBattler][2] | (gBattleBufferA[gActiveBattler][3] << 8);
+#if WASM
+    u8 shortcutType;
+    u8 shortcutValue;
+
+    WasmBattleShortcutSetBattler(gActiveBattler);
+
+    if (WasmBattleShortcutTakeMove(&shortcutValue))
+        shortcutType = WASM_BATTLE_SHORTCUT_MOVE;
+    else if (WasmBattleShortcutTakeParty(&shortcutValue))
+        shortcutType = WASM_BATTLE_SHORTCUT_PARTY;
+    else
+        shortcutType = WASM_BATTLE_SHORTCUT_NONE;
+
+    if (shortcutType == WASM_BATTLE_SHORTCUT_MOVE)
+    {
+        WasmBattleShortcutHide();
+        WasmBattleShortcutQueue(WASM_BATTLE_SHORTCUT_MOVE, shortcutValue);
+        gActionSelectionCursor[gActiveBattler] = B_ACTION_USE_MOVE;
+        gMoveSelectionCursor[gActiveBattler] = shortcutValue;
+        gMain.newKeys |= A_BUTTON;
+    }
+    else if (shortcutType == WASM_BATTLE_SHORTCUT_PARTY)
+    {
+        WasmBattleShortcutQueue(WASM_BATTLE_SHORTCUT_PARTY, shortcutValue);
+        gActionSelectionCursor[gActiveBattler] = B_ACTION_SWITCH;
+        gMain.newKeys |= A_BUTTON;
+    }
+#endif
 
     DoBounceEffect(gActiveBattler, BOUNCE_HEALTHBOX, 7, 1);
     DoBounceEffect(gActiveBattler, BOUNCE_MON, 7, 1);
@@ -472,6 +504,20 @@ static void HandleInputChooseMove(void)
 {
     bool32 canSelectTarget = FALSE;
     struct ChooseMoveStruct *moveInfo = (struct ChooseMoveStruct *)(&gBattleBufferA[gActiveBattler][4]);
+#if WASM
+    u8 shortcutMove;
+
+    if (WasmBattleShortcutTakeMove(&shortcutMove) && shortcutMove < gNumberOfMovesToChoose)
+    {
+        WasmBattleShortcutHide();
+        MoveSelectionDestroyCursorAt(gMoveSelectionCursor[gActiveBattler]);
+        gMoveSelectionCursor[gActiveBattler] = shortcutMove;
+        MoveSelectionCreateCursorAt(gMoveSelectionCursor[gActiveBattler], 0);
+        MoveSelectionDisplayPpNumber();
+        MoveSelectionDisplayMoveType();
+        gMain.newKeys |= A_BUTTON;
+    }
+#endif
 
     if (JOY_HELD(DPAD_ANY) && gSaveBlock2Ptr->optionsButtonMode == OPTIONS_BUTTON_MODE_L_EQUALS_A)
         gPlayerDpadHoldFrames++;
@@ -543,6 +589,9 @@ static void HandleInputChooseMove(void)
     else if (JOY_NEW(B_BUTTON) || gPlayerDpadHoldFrames > 59)
     {
         PlaySE(SE_SELECT);
+#if WASM
+        WasmBattleShortcutClearMoves();
+#endif
         BtlController_EmitTwoReturnValues(B_COMM_TO_ENGINE, B_ACTION_EXEC_SCRIPT, 0xFFFF);
         PlayerBufferExecCompleted();
     }
@@ -2569,6 +2618,18 @@ static void HandleChooseActionAfterDma3(void)
         gBattle_BG0_X = 0;
         gBattle_BG0_Y = DISPLAY_HEIGHT;
         gBattlerControllerFuncs[gActiveBattler] = HandleInputChooseAction;
+#if WASM
+        WasmBattleShortcutSetBattler(gActiveBattler);
+        if (!(gBattleTypeFlags & (BATTLE_TYPE_PALACE | BATTLE_TYPE_SAFARI | BATTLE_TYPE_WALLY_TUTORIAL)))
+        {
+            u16 moves[MAX_MON_MOVES];
+            u8 i;
+
+            for (i = 0; i < MAX_MON_MOVES; i++)
+                moves[i] = gBattleMons[gActiveBattler].moves[i];
+            WasmBattleShortcutSetAction(gActiveBattler, MAX_MON_MOVES, moves, gBattleStruct->battlerPartyOrders[gActiveBattler]);
+        }
+#endif
     }
 }
 
@@ -2611,6 +2672,19 @@ static void HandleChooseMoveAfterDma3(void)
         gBattle_BG0_X = 0;
         gBattle_BG0_Y = DISPLAY_HEIGHT * 2;
         gBattlerControllerFuncs[gActiveBattler] = HandleInputChooseMove;
+#if WASM
+        WasmBattleShortcutSetBattler(gActiveBattler);
+        {
+            struct ChooseMoveStruct *moveInfo = (struct ChooseMoveStruct *)(&gBattleBufferA[gActiveBattler][4]);
+            u16 moves[MAX_MON_MOVES];
+            u8 unusableMoves = CheckMoveLimitations(gActiveBattler, 0, MOVE_LIMITATIONS_ALL);
+            u8 i;
+
+            for (i = 0; i < gNumberOfMovesToChoose; i++)
+                moves[i] = (unusableMoves & gBitTable[i]) ? MOVE_NONE : moveInfo->moves[i];
+            WasmBattleShortcutSetMoves(gNumberOfMovesToChoose, moves);
+        }
+#endif
     }
 }
 
@@ -2668,6 +2742,10 @@ static void PlayerHandleChoosePokemon(void)
 
     for (i = 0; i < (int)ARRAY_COUNT(gBattlePartyCurrentOrder); i++)
         gBattlePartyCurrentOrder[i] = gBattleBufferA[gActiveBattler][4 + i];
+#if WASM
+    WasmBattleShortcutSetBattler(gActiveBattler);
+    WasmBattleShortcutSetParty(gActiveBattler, gBattleBufferA[gActiveBattler][1] & 0xF, &gBattleBufferA[gActiveBattler][4]);
+#endif
 
     if (gBattleTypeFlags & BATTLE_TYPE_ARENA && (gBattleBufferA[gActiveBattler][1] & 0xF) != PARTY_ACTION_CANT_SWITCH)
     {

@@ -340,6 +340,9 @@ static void write_keys(Pokeemerald *instance, uint32_t held)
 #define MAX_INPUT_DEVICES 8
 #define MAX_TOUCHES 8
 #define MAX_UI_BUTTONS 11
+#define MAX_BATTLE_SHORTCUTS 10
+#define BATTLE_SHORTCUT_MOVE 1
+#define BATTLE_SHORTCUT_PARTY 2
 
 #ifndef EVIOCGABS
 #define EVIOCGABS(abs) _IOR('E', 0x40 + (abs), struct input_absinfo)
@@ -428,6 +431,19 @@ typedef struct {
     KindleButton buttons[MAX_UI_BUTTONS];
     size_t buttonCount;
 } KindleLayout;
+
+typedef struct {
+    char label[13];
+    RectI rect;
+    uint32_t index;
+    uint32_t type;
+} BattleShortcut;
+
+typedef struct {
+    BattleShortcut buttons[MAX_BATTLE_SHORTCUTS];
+    size_t count;
+    int pressedIndex;
+} BattleShortcutLayout;
 
 typedef struct {
     int fd;
@@ -789,30 +805,88 @@ static bool contains(RectI rect, int x, int y)
     return x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height;
 }
 
-static uint32_t touch_buttons(const KindleLayout *layout, int x, int y, bool down)
+static BattleShortcutLayout make_battle_shortcuts(Pokeemerald *instance, const KindleLayout *base, int width, int height)
+{
+    BattleShortcutLayout layout;
+    wasm_rt_memory_t *memory = w2c_0x24pokeemerald0x2Ewasm_memory(instance);
+    uint32_t count = w2c_0x24pokeemerald0x2Ewasm_WasmBattleShortcutCount(instance);
+    int margin = width / 24;
+    int gap = margin / 3;
+    int columns = 2;
+    int buttonWidth = (width - margin * 2 - gap) / columns;
+    int controlsTop = base->screen.y + base->screen.height + margin / 3;
+    int controlsBottom = height - margin / 2;
+    int totalRows = (int)((count + columns - 1) / columns);
+    int buttonHeight = totalRows ? (controlsBottom - controlsTop - (totalRows - 1) * gap) / totalRows : 0;
+    int maxButtonHeight = width / 12;
+    int y;
+
+    if (buttonHeight > maxButtonHeight)
+        buttonHeight = maxButtonHeight;
+    y = controlsTop + (controlsBottom - controlsTop - totalRows * buttonHeight - (totalRows - 1) * gap) / 2;
+
+    memset(&layout, 0, sizeof(layout));
+    layout.pressedIndex = -1;
+    if (count > MAX_BATTLE_SHORTCUTS)
+        count = MAX_BATTLE_SHORTCUTS;
+    for (uint32_t i = 0; i < count; i++) {
+        BattleShortcut *shortcut = &layout.buttons[layout.count];
+        uint32_t labelPtr = w2c_0x24pokeemerald0x2Ewasm_WasmBattleShortcutLabel(instance, i);
+        int row = (int)(i / columns);
+        int column = (int)(i % columns);
+
+        if (labelPtr >= memory->size)
+            continue;
+        shortcut->index = i;
+        shortcut->type = w2c_0x24pokeemerald0x2Ewasm_WasmBattleShortcutType(instance, i);
+        snprintf(shortcut->label, sizeof(shortcut->label), "%s", (const char *)memory->data + labelPtr);
+        shortcut->rect = (RectI){margin + column * (buttonWidth + gap), y + row * (buttonHeight + gap), buttonWidth, buttonHeight};
+        layout.count++;
+    }
+    return layout;
+}
+
+static int touch_battle_shortcut(const BattleShortcutLayout *layout, int x, int y, bool down)
+{
+    if (!down)
+        return -1;
+    for (size_t i = 0; i < layout->count; i++) {
+        if (contains(layout->buttons[i].rect, x, y))
+            return (int)i;
+    }
+    return -1;
+}
+
+static uint32_t touch_buttons(const KindleLayout *layout, int x, int y, bool down, bool shortcutsVisible)
 {
     if (!down)
         return 0;
 
     uint32_t held = 0;
     for (size_t i = 0; i < layout->buttonCount; i++) {
+        if (shortcutsVisible && layout->buttons[i].mask != BUTTON_EXIT)
+            continue;
         if (contains(layout->buttons[i].rect, x, y))
             held |= layout->buttons[i].mask;
     }
     return held;
 }
 
+static void draw_labeled_button(Framebuffer *fb, const char *label, RectI rect, bool down)
+{
+    fill_rect(fb, rect, down ? 120 : 224);
+    draw_rect_outline(fb, rect, 3, 24);
+
+    int scale = rect.height >= 70 ? 3 : 2;
+    int width = text_width(label, scale);
+    int x = rect.x + (rect.width - width) / 2;
+    int y = rect.y + (rect.height - 7 * scale) / 2;
+    draw_text(fb, label, x, y, scale, 16);
+}
+
 static void draw_button(Framebuffer *fb, const KindleButton *button, uint32_t held)
 {
-    bool down = (held & button->mask) != 0;
-    fill_rect(fb, button->rect, down ? 120 : 224);
-    draw_rect_outline(fb, button->rect, 3, 24);
-
-    int scale = button->rect.height >= 70 ? 3 : 2;
-    int width = text_width(button->label, scale);
-    int x = button->rect.x + (button->rect.width - width) / 2;
-    int y = button->rect.y + (button->rect.height - 7 * scale) / 2;
-    draw_text(fb, button->label, x, y, scale, 16);
+    draw_labeled_button(fb, button->label, button->rect, (held & button->mask) != 0);
 }
 
 static void draw_game(Framebuffer *fb, const KindleLayout *layout, const uint8_t *rgba)
@@ -829,10 +903,19 @@ static void draw_game(Framebuffer *fb, const KindleLayout *layout, const uint8_t
     }
 }
 
-static void draw_ui(Framebuffer *fb, const KindleLayout *layout, uint32_t held)
+static void draw_ui(Framebuffer *fb, const KindleLayout *layout, const BattleShortcutLayout *shortcuts, uint32_t held)
 {
-    for (size_t i = 0; i < layout->buttonCount; i++)
+    for (size_t i = 0; i < layout->buttonCount; i++) {
+        if (shortcuts->count != 0 && layout->buttons[i].mask != BUTTON_EXIT)
+            continue;
         draw_button(fb, &layout->buttons[i], held);
+    }
+    for (size_t i = 0; i < shortcuts->count; i++) {
+        const BattleShortcut *shortcut = &shortcuts->buttons[i];
+        char label[17];
+        snprintf(label, sizeof(label), "%s%s", shortcut->type == BATTLE_SHORTCUT_PARTY ? "GO " : "", shortcut->label);
+        draw_labeled_button(fb, label, shortcut->rect, shortcuts->pressedIndex == (int)i);
+    }
 }
 
 static void set_abs_range(InputDevice *device, int code, int *minValue, int *maxValue)
@@ -929,12 +1012,15 @@ static void poll_input(InputDevice *devices, int deviceCount, int fbWidth, int f
     }
 }
 
-static uint32_t input_buttons(InputDevice *devices, int deviceCount, const KindleLayout *layout)
+static uint32_t input_buttons(InputDevice *devices, int deviceCount, const KindleLayout *layout, const BattleShortcutLayout *shortcuts, int *shortcutPressed)
 {
     uint32_t held = 0;
+    *shortcutPressed = -1;
     for (int i = 0; i < deviceCount; i++) {
         held |= devices[i].keyHeld;
-        held |= touch_buttons(layout, devices[i].x, devices[i].y, devices[i].down);
+        held |= touch_buttons(layout, devices[i].x, devices[i].y, devices[i].down, shortcuts->count != 0);
+        if (*shortcutPressed < 0)
+            *shortcutPressed = touch_battle_shortcut(shortcuts, devices[i].x, devices[i].y, devices[i].down);
     }
     return held;
 }
@@ -1104,6 +1190,8 @@ int main(int argc, char **argv)
     w2c_0x24pokeemerald0x2Ewasm_AgbMain(&instance);
 
     KindleLayout layout = make_layout(fb.width, fb.height);
+    BattleShortcutLayout shortcuts = make_battle_shortcuts(&instance, &layout, fb.width, fb.height);
+    int previousShortcut = -1;
     double lastFrameTime = monotonic_seconds();
     double frameAccumulator = 0.0;
     double displayInterval = 1.0 / displayFps;
@@ -1117,7 +1205,13 @@ int main(int argc, char **argv)
         frameAccumulator += elapsed * 60.0;
 
         poll_input(inputs, inputCount, fb.width, fb.height);
-        uint32_t held = input_buttons(inputs, inputCount, &layout);
+        shortcuts = make_battle_shortcuts(&instance, &layout, fb.width, fb.height);
+        int shortcutPressed;
+        uint32_t held = input_buttons(inputs, inputCount, &layout, &shortcuts, &shortcutPressed);
+        shortcuts.pressedIndex = shortcutPressed;
+        if (shortcutPressed >= 0 && shortcutPressed != previousShortcut)
+            w2c_0x24pokeemerald0x2Ewasm_WasmBattleShortcutSelect(&instance, shortcuts.buttons[shortcutPressed].index);
+        previousShortcut = shortcutPressed;
         if (held & BUTTON_EXIT)
             gQuit = 1;
         write_keys(&instance, held);
@@ -1140,7 +1234,7 @@ int main(int argc, char **argv)
             uint32_t displayPtr = w2c_0x24pokeemerald0x2Ewasm_WasmDisplayBuffer(&instance);
             const uint8_t *display = w2c_0x24pokeemerald0x2Ewasm_memory(&instance)->data + displayPtr;
             draw_game(&fb, &layout, display);
-            draw_ui(&fb, &layout, held);
+            draw_ui(&fb, &layout, &shortcuts, held);
             refresh_framebuffer(&fb, (RectI){0, 0, fb.width, fb.height}, false);
             nextDisplay = now + displayInterval;
         }
