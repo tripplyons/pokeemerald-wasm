@@ -96,6 +96,7 @@ let instance;
 let memory;
 let u8;
 let u16;
+let u32;
 let statusText = 'loading wasm…';
 let lastFpsUpdate = performance.now();
 let lastTick = performance.now();
@@ -118,6 +119,7 @@ if (automate) {
 function refreshViews() {
   u8 = new Uint8Array(memory.buffer);
   u16 = new Uint16Array(memory.buffer);
+  u32 = new Uint32Array(memory.buffer);
 }
 
 function bytesToBase64(bytes) {
