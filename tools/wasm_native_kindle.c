@@ -444,6 +444,7 @@ typedef struct {
     RectI back;
     size_t count;
     int pressedIndex;
+    uint32_t signature;
 } BattleShortcutLayout;
 
 typedef struct {
@@ -866,6 +867,17 @@ static BattleShortcutLayout make_battle_shortcuts(Pokeemerald *instance, const K
         shortcut->rect = (RectI){margin + column * (buttonWidth + gap), y + row * (buttonHeight + gap), buttonWidth, buttonHeight};
         layout.count++;
     }
+    layout.signature = 2166136261u ^ (uint32_t)layout.count;
+    for (size_t i = 0; i < layout.count; i++) {
+        const BattleShortcut *shortcut = &layout.buttons[i];
+
+        layout.signature ^= shortcut->type;
+        layout.signature *= 16777619u;
+        for (const char *p = shortcut->label; *p; p++) {
+            layout.signature ^= (uint8_t)*p;
+            layout.signature *= 16777619u;
+        }
+    }
     return layout;
 }
 
@@ -1039,15 +1051,16 @@ static void poll_input(InputDevice *devices, int deviceCount, int fbWidth, int f
     }
 }
 
-static uint32_t input_buttons(InputDevice *devices, int deviceCount, const KindleLayout *layout, const BattleShortcutLayout *shortcuts, int *shortcutPressed)
+static uint32_t input_buttons(InputDevice *devices, int deviceCount, const KindleLayout *layout, const BattleShortcutLayout *shortcuts, int *shortcutPressed, bool *backPressed)
 {
     uint32_t held = 0;
     *shortcutPressed = -1;
+    *backPressed = false;
     for (int i = 0; i < deviceCount; i++) {
         held |= devices[i].keyHeld;
         held |= touch_buttons(layout, devices[i].x, devices[i].y, devices[i].down, shortcuts->count != 0);
         if (shortcuts->count != 0 && devices[i].down && contains(shortcuts->back, devices[i].x, devices[i].y))
-            held |= BUTTON_B;
+            *backPressed = true;
         if (*shortcutPressed < 0)
             *shortcutPressed = touch_battle_shortcut(shortcuts, devices[i].x, devices[i].y, devices[i].down);
     }
@@ -1220,6 +1233,8 @@ int main(int argc, char **argv)
 
     KindleLayout layout = make_layout(fb.width, fb.height);
     BattleShortcutLayout shortcuts = make_battle_shortcuts(&instance, &layout, fb.width, fb.height);
+    bool shortcutsDismissed = false;
+    uint32_t dismissedShortcutSignature = 0;
     int previousShortcut = -1;
     double lastFrameTime = monotonic_seconds();
     double frameAccumulator = 0.0;
@@ -1235,8 +1250,24 @@ int main(int argc, char **argv)
 
         poll_input(inputs, inputCount, fb.width, fb.height);
         shortcuts = make_battle_shortcuts(&instance, &layout, fb.width, fb.height);
+        if (shortcutsDismissed) {
+            if (shortcuts.signature == dismissedShortcutSignature)
+                shortcuts.count = 0;
+            else {
+                shortcutsDismissed = false;
+                previousShortcut = -1;
+            }
+        }
         int shortcutPressed;
-        uint32_t held = input_buttons(inputs, inputCount, &layout, &shortcuts, &shortcutPressed);
+        bool backPressed;
+        uint32_t held = input_buttons(inputs, inputCount, &layout, &shortcuts, &shortcutPressed, &backPressed);
+        if (backPressed) {
+            shortcutsDismissed = true;
+            dismissedShortcutSignature = shortcuts.signature;
+            shortcuts.count = 0;
+            shortcutPressed = -1;
+            previousShortcut = -1;
+        }
         shortcuts.pressedIndex = shortcutPressed;
         if (shortcutPressed >= 0 && shortcutPressed != previousShortcut)
             w2c_0x24pokeemerald0x2Ewasm_WasmBattleShortcutSelect(&instance, shortcuts.buttons[shortcutPressed].index);
