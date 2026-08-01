@@ -441,6 +441,7 @@ typedef struct {
 
 typedef struct {
     BattleShortcut buttons[MAX_BATTLE_SHORTCUTS];
+    RectI back;
     size_t count;
     int pressedIndex;
 } BattleShortcutLayout;
@@ -816,6 +817,28 @@ static BattleShortcutLayout make_battle_shortcuts(Pokeemerald *instance, const K
     int gap = margin / 3;
     int columns = 2;
     int buttonWidth = (width - margin * 2 - gap) / columns;
+    RectI exitButton = base->buttons[0].rect;
+    int backWidth = exitButton.width;
+    int leftSpace = exitButton.x - margin;
+    int rightSpace = width - exitButton.x - exitButton.width - margin;
+    int backX;
+
+    if (leftSpace >= backWidth) {
+        backX = margin;
+    } else if (rightSpace >= backWidth) {
+        backX = width - margin - backWidth;
+    } else if (leftSpace >= rightSpace) {
+        backWidth = leftSpace;
+        backX = margin;
+    } else {
+        backWidth = rightSpace;
+        backX = width - margin - backWidth;
+    }
+
+    memset(&layout, 0, sizeof(layout));
+    layout.back = (RectI){backX, exitButton.y, backWidth, exitButton.height};
+    layout.pressedIndex = -1;
+
     int controlsTop = base->screen.y + base->screen.height + margin / 3;
     int controlsBottom = height - margin / 2;
     int totalRows = (int)((count + columns - 1) / columns);
@@ -827,8 +850,6 @@ static BattleShortcutLayout make_battle_shortcuts(Pokeemerald *instance, const K
         buttonHeight = maxButtonHeight;
     y = controlsTop + (controlsBottom - controlsTop - totalRows * buttonHeight - (totalRows - 1) * gap) / 2;
 
-    memset(&layout, 0, sizeof(layout));
-    layout.pressedIndex = -1;
     if (count > MAX_BATTLE_SHORTCUTS)
         count = MAX_BATTLE_SHORTCUTS;
     for (uint32_t i = 0; i < count; i++) {
@@ -914,6 +935,8 @@ static void draw_ui(Framebuffer *fb, const KindleLayout *layout, const BattleSho
             continue;
         draw_button(fb, &layout->buttons[i], held);
     }
+    if (shortcuts->count != 0)
+        draw_labeled_button(fb, "BACK", shortcuts->back, (held & BUTTON_B) != 0);
     for (size_t i = 0; i < shortcuts->count; i++) {
         const BattleShortcut *shortcut = &shortcuts->buttons[i];
         char label[17];
@@ -1023,6 +1046,8 @@ static uint32_t input_buttons(InputDevice *devices, int deviceCount, const Kindl
     for (int i = 0; i < deviceCount; i++) {
         held |= devices[i].keyHeld;
         held |= touch_buttons(layout, devices[i].x, devices[i].y, devices[i].down, shortcuts->count != 0);
+        if (shortcuts->count != 0 && devices[i].down && contains(shortcuts->back, devices[i].x, devices[i].y))
+            held |= BUTTON_B;
         if (*shortcutPressed < 0)
             *shortcutPressed = touch_battle_shortcut(shortcuts, devices[i].x, devices[i].y, devices[i].down);
     }
