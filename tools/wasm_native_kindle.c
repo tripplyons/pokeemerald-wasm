@@ -723,9 +723,9 @@ static KindleLayout make_layout(int width, int height)
     if (margin < 24)
         margin = 24;
 
-    int exitHeight = width / 30;
-    if (exitHeight < 44)
-        exitHeight = 44;
+    int exitHeight = width / 22;
+    if (exitHeight < 64)
+        exitHeight = 64;
     int exitWidth = width / 4;
     if (exitWidth < 180)
         exitWidth = 180;
@@ -737,25 +737,26 @@ static KindleLayout make_layout(int width, int height)
     if (controlsHeight < 360)
         controlsHeight = 360;
 
-    int maxScreenWidth = width - margin * 2;
     int maxScreenHeight = height - controlsHeight - exitY - exitHeight - margin;
     if (maxScreenHeight < DISPLAY_HEIGHT)
         maxScreenHeight = height - margin * 2;
 
-    int scaleX = maxScreenWidth / DISPLAY_WIDTH;
-    int scaleY = maxScreenHeight / DISPLAY_HEIGHT;
-    int scale = scaleX < scaleY ? scaleX : scaleY;
-    if (scale < 1)
-        scale = 1;
-
-    layout.screen.width = DISPLAY_WIDTH * scale;
-    layout.screen.height = DISPLAY_HEIGHT * scale;
+    layout.screen.width = width;
+    layout.screen.height = layout.screen.width * DISPLAY_HEIGHT / DISPLAY_WIDTH;
+    if (layout.screen.height > maxScreenHeight) {
+        layout.screen.height = maxScreenHeight;
+        layout.screen.width = layout.screen.height * DISPLAY_WIDTH / DISPLAY_HEIGHT;
+    }
+    if (layout.screen.width < DISPLAY_WIDTH) {
+        layout.screen.width = DISPLAY_WIDTH;
+        layout.screen.height = DISPLAY_HEIGHT;
+    }
     layout.screen.x = (width - layout.screen.width) / 2;
-    layout.screen.y = exitY + exitHeight + margin / 2;
+    layout.screen.y = exitY + exitHeight;
 
     add_button(&layout, "EXIT", (RectI){(width - exitWidth) / 2, exitY, exitWidth, exitHeight}, BUTTON_EXIT);
 
-    int lrGap = margin;
+    int lrGap = margin / 2;
     int lrHeight = exitHeight;
     int lrWidth = (layout.screen.width - lrGap) / 2;
     int lrY = layout.screen.y + layout.screen.height + margin / 3;
@@ -766,20 +767,20 @@ static KindleLayout make_layout(int width, int height)
     if (bottomMargin < 24)
         bottomMargin = 24;
     int bottomButtonHeight = exitHeight;
-    int bottomY = height - bottomMargin - bottomButtonHeight;
-
+    int bottomGap = margin / 2;
     int controlsTop = lrY + lrHeight + margin / 2;
-    int available = bottomY - controlsTop - margin / 2;
-    int unit = available / 3;
-    if (unit > width / 8)
-        unit = width / 8;
+    int available = height - bottomMargin - controlsTop;
+    int unit = (available - bottomButtonHeight - bottomGap) / 3;
+    if (unit > width / 7)
+        unit = width / 7;
     if (unit < 48)
         unit = 48;
-    int pad = unit / 5;
+    int pad = unit / 12;
     int button = unit - pad;
-    int y = controlsTop;
-    if (available > unit * 3)
-        y += (available - unit * 3) / 2;
+    int controlBlockHeight = unit * 3 + bottomGap + bottomButtonHeight;
+    int y = controlsTop + (available - controlBlockHeight) / 2;
+    if (y < controlsTop)
+        y = controlsTop;
 
     int dpadX = margin;
     add_button(&layout, "UP", (RectI){dpadX + unit, y, button, button}, BUTTON_UP);
@@ -788,11 +789,12 @@ static KindleLayout make_layout(int width, int height)
     add_button(&layout, "DOWN", (RectI){dpadX + unit, y + unit * 2, button, button}, BUTTON_DOWN);
 
     int faceX = width - margin - unit * 3;
-    add_button(&layout, "B", (RectI){faceX, y + unit, button + unit / 3, button + unit / 3}, BUTTON_B);
-    add_button(&layout, "A", (RectI){faceX + unit * 3 / 2, y + unit / 2, button + unit / 3, button + unit / 3}, BUTTON_A);
+    int faceButton = button + unit / 4;
+    add_button(&layout, "B", (RectI){faceX, y + unit, faceButton, faceButton}, BUTTON_B);
+    add_button(&layout, "A", (RectI){faceX + unit * 3 / 2, y + unit / 2, faceButton, faceButton}, BUTTON_A);
 
+    int bottomY = y + unit * 3 + bottomGap;
     int bottomButtonWidth = unit * 2;
-    int bottomGap = margin / 2;
     int bottomX = (width - bottomButtonWidth * 2 - bottomGap) / 2;
     add_button(&layout, "SELECT", (RectI){bottomX, bottomY, bottomButtonWidth, bottomButtonHeight}, BUTTON_SELECT);
     add_button(&layout, "START", (RectI){bottomX + bottomButtonWidth + bottomGap, bottomY, bottomButtonWidth, bottomButtonHeight}, BUTTON_START);
@@ -818,7 +820,7 @@ static BattleShortcutLayout make_battle_shortcuts(Pokeemerald *instance, const K
     int controlsBottom = height - margin / 2;
     int totalRows = (int)((count + columns - 1) / columns);
     int buttonHeight = totalRows ? (controlsBottom - controlsTop - (totalRows - 1) * gap) / totalRows : 0;
-    int maxButtonHeight = width / 12;
+    int maxButtonHeight = width / 9;
     int y;
 
     if (buttonHeight > maxButtonHeight)
@@ -892,13 +894,15 @@ static void draw_button(Framebuffer *fb, const KindleButton *button, uint32_t he
 static void draw_game(Framebuffer *fb, const KindleLayout *layout, const uint8_t *rgba)
 {
     fill_rect(fb, (RectI){0, 0, fb->width, fb->height}, 255);
-    fill_rect(fb, (RectI){layout->screen.x - 6, layout->screen.y - 6, layout->screen.width + 12, layout->screen.height + 12}, 0);
 
-    int scale = layout->screen.width / DISPLAY_WIDTH;
     for (int sy = 0; sy < DISPLAY_HEIGHT; sy++) {
         for (int sx = 0; sx < DISPLAY_WIDTH; sx++) {
             uint8_t gray = rgba_to_gray(rgba + ((sy * DISPLAY_WIDTH + sx) * 4));
-            fill_rect(fb, (RectI){layout->screen.x + sx * scale, layout->screen.y + sy * scale, scale, scale}, gray);
+            int x0 = layout->screen.x + sx * layout->screen.width / DISPLAY_WIDTH;
+            int x1 = layout->screen.x + (sx + 1) * layout->screen.width / DISPLAY_WIDTH;
+            int y0 = layout->screen.y + sy * layout->screen.height / DISPLAY_HEIGHT;
+            int y1 = layout->screen.y + (sy + 1) * layout->screen.height / DISPLAY_HEIGHT;
+            fill_rect(fb, (RectI){x0, y0, x1 - x0, y1 - y0}, gray);
         }
     }
 }
