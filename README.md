@@ -4,6 +4,8 @@ pokeemerald-wasm is a recompilation of the original [pret/pokeemerald](https://g
 
 Play it at [pokeemerald.com](https://pokeemerald.com).
 
+For the 3D renderer built from this port, see [pokeemerald-3d](https://github.com/tripplyons/pokeemerald-3d).
+
 ## Native Raylib frontend
 
 `make native-raylib` builds `build/native/pokeemerald-native` by first building the WASM module, converting it to C with WABT's `wasm2c`, and linking a Raylib host app. The native app uses the same WASM ABI as the browser frontend and stores flash saves in `build/native/pokeemerald-native.sav`.
