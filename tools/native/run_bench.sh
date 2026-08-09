@@ -21,7 +21,16 @@ if command -v ccache >/dev/null 2>&1 && command -v clang >/dev/null 2>&1; then
   NATIVE_CC="ccache clang"
 fi
 
-BUILD_LOG=$(mktemp /tmp/native_bench_build.XXXXXX.log)
+BUILD_LOG=
+ERR_LOG=
+cleanup_logs() {
+  test -z "$BUILD_LOG" || rm -f "$BUILD_LOG"
+  test -z "$ERR_LOG" || rm -f "$ERR_LOG"
+}
+trap cleanup_logs EXIT
+trap 'exit 143' HUP INT TERM
+
+BUILD_LOG=$(mktemp "${TMPDIR:-/tmp}/native_bench_build.XXXXXX") || exit 1
 if ! make -j8 NATIVE_CC="$NATIVE_CC" native-bench >"$BUILD_LOG" 2>&1; then
   python3 - "$BUILD_LOG" <<'PYEOF'
 import json, sys
@@ -30,11 +39,13 @@ with open(sys.argv[1], errors="replace") as f:
 print(json.dumps({"score": 0, "info": {"error": "build failed", "build_log_tail": tail}}))
 PYEOF
   rm -f "$BUILD_LOG"
+  BUILD_LOG=
   exit 0
 fi
 rm -f "$BUILD_LOG"
+BUILD_LOG=
 
-ERR_LOG=$(mktemp /tmp/native_bench_run.XXXXXX.log)
+ERR_LOG=$(mktemp "${TMPDIR:-/tmp}/native_bench_run.XXXXXX") || exit 1
 OUT=$("$BENCH" --script "$SCRIPT" --golden "$GOLDEN" --passes 2 2>"$ERR_LOG")
 RC=$?
 if [ $RC -ne 0 ] || [ -z "$OUT" ]; then
@@ -46,7 +57,9 @@ with open(sys.argv[2], errors="replace") as f:
 print(json.dumps({"score": 0, "info": {"error": "bench failed", "exit_code": rc, "stderr_tail": tail}}))
 PYEOF
   rm -f "$ERR_LOG"
+  ERR_LOG=
   exit 0
 fi
 rm -f "$ERR_LOG"
+ERR_LOG=
 printf '%s\n' "$OUT"
