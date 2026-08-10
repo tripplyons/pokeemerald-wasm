@@ -4,6 +4,8 @@ pokeemerald-wasm is a recompilation of the original [pret/pokeemerald](https://g
 
 Play it at [pokeemerald.com](https://pokeemerald.com).
 
+[Join our Discord server](https://discord.gg/u24yh5b83N)
+
 For the 3D renderer built from this port, see [pokeemerald-3d](https://github.com/tripplyons/pokeemerald-3d).
 
 ## Native Raylib frontend
