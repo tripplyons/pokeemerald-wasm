@@ -159,14 +159,33 @@ static void obj_affine_set(uintptr_t src, uintptr_t dst, uint32_t count, uint32_
     }
 }
 
+#if defined(__aarch64__)
+typedef uint8_t OamBytes __attribute__((vector_size(16)));
+
+static void expand_oam_matrices(const uint8_t *source, OamBytes records[4])
+{
+    // ARM64 byte shuffles place eight matrix halfwords in their OAM records.
+    OamBytes values, zero = {0};
+    memcpy(&values, source, sizeof(values));
+    records[0] = __builtin_shufflevector(zero, values,
+        0, 0, 0, 0, 0, 0, 16, 17, 0, 0, 0, 0, 0, 0, 18, 19);
+    records[1] = __builtin_shufflevector(zero, values,
+        0, 0, 0, 0, 0, 0, 20, 21, 0, 0, 0, 0, 0, 0, 22, 23);
+    records[2] = __builtin_shufflevector(zero, values,
+        0, 0, 0, 0, 0, 0, 24, 25, 0, 0, 0, 0, 0, 0, 26, 27);
+    records[3] = __builtin_shufflevector(zero, values,
+        0, 0, 0, 0, 0, 0, 28, 29, 0, 0, 0, 0, 0, 0, 30, 31);
+}
+#endif
+
 static void copy_oam_matrices(uintptr_t src, uintptr_t dest,
                               uintptr_t dummy, uint32_t oam_count, uint32_t oam_limit)
 {
-    uint8_t *restrict source;
+    const uint8_t *restrict source;
     uint8_t *restrict output;
     uint64_t dummy_oam;
 
-    source = (uint8_t *)src;
+    source = (const uint8_t *)src;
     output = (uint8_t *)dest;
     memcpy(&dummy_oam, (uint8_t *)dummy, sizeof(dummy_oam));
     size_t i = 0;
@@ -179,12 +198,40 @@ static void copy_oam_matrices(uintptr_t src, uintptr_t dest,
     // Each OAM record holds one matrix component in its last halfword.
     // Fill unused records and insert that component in the same write.
     dummy_oam &= UINT64_C(0x0000ffffffffffff);
+#if defined(__aarch64__)
+    const uint64_t blanks[2] = {dummy_oam, dummy_oam};
+    const uint64_t masks[2] = {UINT64_C(0x0000ffffffffffff), UINT64_C(0x0000ffffffffffff)};
+    OamBytes blank, mask;
+    memcpy(&blank, blanks, sizeof(blank));
+    memcpy(&mask, masks, sizeof(mask));
+    for (; i + 8 <= oam_limit; i += 8) {
+        OamBytes records[4];
+        expand_oam_matrices(source + i * 2, records);
+        for (size_t j = 0; j < 4; j++) {
+            records[j] |= blank;
+            memcpy(output + i * 8 + j * 16, &records[j], sizeof(records[j]));
+        }
+    }
+#endif
     for (; i < oam_limit; i++) {
         uint16_t value;
         memcpy(&value, source + i * 2, sizeof(value));
         uint64_t oam = dummy_oam | ((uint64_t)value << 48);
         memcpy(output + i * 8, &oam, sizeof(oam));
     }
+#if defined(__aarch64__)
+    // Preserve attributes beyond the OAM limit while replacing their matrix values.
+    for (; i + 8 <= 128; i += 8) {
+        OamBytes records[4];
+        expand_oam_matrices(source + i * 2, records);
+        for (size_t j = 0; j < 4; j++) {
+            OamBytes record;
+            memcpy(&record, output + i * 8 + j * 16, sizeof(record));
+            record = (record & mask) | records[j];
+            memcpy(output + i * 8 + j * 16, &record, sizeof(record));
+        }
+    }
+#endif
     for (; i < 128; i++) {
         uint16_t value;
         memcpy(&value, source + i * 2, sizeof(value));

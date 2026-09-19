@@ -305,3 +305,60 @@ replay comparisons are under the ignored `build/native/perf/opportunities/`
 directory. The production engine and benchmark remain unchanged; desktop
 builds now use the local PGO profile, and the Kindle frontend batches clock
 checks.
+
+## ARM64 OAM byte shuffles
+
+OAM preparation and loading still run on their original frames. The native
+ARM64 helper now expands eight matrix halfwords into eight OAM records with
+byte shuffles. It fills inactive records in bulk and preserves the attribute
+bytes beyond the OAM limit. Scalar loops handle active records and partial
+batches. Other native architectures retain the previous implementation.
+No original game source, browser code, framebuffer goldens, or timing rules
+changed.
+
+A plain C bulk-write prototype roughly halved the isolated helper time but
+lost 0.9% in the full engine after fresh PGO training. Inspection of the
+linked code showed that PGO already vectorized and unrolled the old loops.
+Larger plain C batches, vector widening, NEON interleaved writes, and moving
+the helper out of line did not establish a gain. Byte shuffles avoid the
+repeated widening and shifting needed to place each matrix component in the
+last halfword of an OAM record.
+
+The final comparison used the production binary after `make native-pgo`,
+against a preserved build of `a1d5044af` with its previous trained profile.
+Both use Apple clang 21.0.0, `-O3 -flto`, and PGO on the same M3 Max. Results
+are medians of three alternating eight-pass runs per binary, using the
+unchanged replay, warmup, and measurement counts. Compilation and other
+validation had finished before these runs.
+
+| Scenario | Previous frames/s | Byte-shuffle frames/s | Change |
+| --- | ---: | ---: | ---: |
+| Overworld | 5,294,999 | 5,391,560 | +1.8% |
+| Menu | 12,797,090 | 13,209,970 | +3.2% |
+| Battle | 6,516,275 | 6,549,248 | +0.5% |
+| Aggregate score | 8,202,788 | 8,383,593 | +2.2% |
+
+All six unchanged goldens, determinism checks, and sprite-sort checks pass.
+The final binary matches all 27,229 baseline replay display hashes,
+including the starter transition that exposed the deferral bug. The existing
+16,641 count/limit cases, unaligned buffers, and guard bytes pass under ASan
+and UBSan. The x86 fallback BIOS checks also pass under Rosetta.
+
+`make native-pgo`, `make native-test native-raylib`, and `make native-kindle`
+pass. The benchmark/profile rebuild has no profile mismatch warnings. The
+Raylib build discards the benchmark's incompatible `main` profile; the
+engine uses the newly trained profile. Other desktop warnings are the
+existing unaligned data relocation and constant-array extension warnings.
+
+The measured gain applies to these ARM64 headless scenarios with PGO. It
+does not establish a whole-game, displayed-FPS, browser, or Kindle gain.
+The ARM64 path preserves every OAM preparation and load; the rejected
+cache and deferral paths remain disabled.
+
+Sources for discarded prototypes, raw timing results, build logs, and replay
+traces are in the ignored `build/native/perf/oam-bulk/` directory. The final
+measurements are `baseline-production-*.json`, `final-production-*.json`, and
+`production-summary.json`; correctness evidence includes `final-trace.txt`,
+`final-targets.log`, and `final-kindle.log`. The refreshed default profile is
+local at `build/native/pgo/native.profdata` and is recreated by
+`make native-pgo`.
