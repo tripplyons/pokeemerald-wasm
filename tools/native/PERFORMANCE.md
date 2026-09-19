@@ -250,6 +250,29 @@ the timing and contents of prepared and loaded OAM across callback changes,
 direct OAM writes, and frames where ordinary preparation or loading stops.
 Rebuilding only on a displayed frame is insufficient.
 
+Follow-up instrumentation traced the failure to frame 26,360. The starter
+callback changes `gMain.callback2`, then finishes its last `BuildOamBuffer`
+call. Subsequent frames continue calling `LoadOam` without preparing a new
+buffer. Skipping that last preparation loses the contents needed by the
+next displayed frame. Deferral remains disabled; an endpoint-only benchmark
+cannot validate it. The instrumented trace is `trace-oam-16.log` in the
+opportunities directory.
+
+An alternative cached the packed dummy OAM records by matrix bytes and dummy
+attributes, then copied the inactive range in bulk. This retained every
+preparation and load at its original time. All six goldens and all 27,229
+replay hashes matched; the unaligned BIOS checks also passed under ASan and
+UBSan. The first comparison lost 5.5% with the existing profile. After fresh
+training and rebuilding all engine objects with the candidate's profile,
+three alternating eight-pass runs still lost 3.5%: median aggregate
+throughput fell from 8,441,531 to 8,146,227 frames/s. The cache is also
+rejected. The production OAM implementation is unchanged.
+
+The cache experiment, retraining script, timing results, and traces are
+`cache-bios.c`, `retrain-cache.py`, `cache-trained-*.json`, and
+`cache-trained-trace.txt` in the opportunities directory. Its full-profile
+rebuild had no profile mismatch warnings.
+
 Broader skipping also has explicit dependencies: field effects read
 `sprite->oam.x/y`, `ReadPlttIntoBuffers` reads palette RAM back into game
 buffers, and VBlank advances RNG and timers. Those operations cannot simply
