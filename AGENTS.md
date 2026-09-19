@@ -23,8 +23,8 @@ source tree and behavior as much as possible.
 - `make serve-wasm` builds the WASM target and serves the browser frontend.
 - Browser runtime code lives in `web/`.
 - The desktop/native port lives in `tools/native/`:
-  - `native_engine.h` / `native_engine.c`: headless engine core (wasm2c
-    instance, `w2c_env_*` BIOS shims, pad input, flash saves, framebuffer
+  - `native_engine.h` / `native_engine.c`: headless engine core (direct C
+    build, native BIOS shims, pad input, flash saves, framebuffer
     access). No raylib dependency.
   - `raylib_main.c`: thin raylib GUI frontend (`make native-raylib`).
   - `bench_main.c`: headless FPS + correctness benchmark

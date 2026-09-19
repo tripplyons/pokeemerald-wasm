@@ -401,7 +401,7 @@ def load_event_macros(source: Optional[Path] = None) -> Dict[str, AsmMacro]:
                 signature = stripped[len(".macro "):]
                 name, _, params_text = signature.partition(" ")
                 params = []
-                for param in split_args(params_text):
+                for param in split_args(re.sub(r":req\s+(?=\w)", ":req, ", params_text)):
                     if not param:
                         continue
                     if param.endswith(":vararg"):

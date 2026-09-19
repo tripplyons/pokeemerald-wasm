@@ -240,7 +240,7 @@ int main(int argc, char **argv)
     uint32_t lastSaveHash = native_engine_load_flash(engine, savePath);
     native_engine_boot(engine);
 
-    InitWindow(960, 720, "pokeemerald wasm2c native");
+    InitWindow(960, 720, "pokeemerald native");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
     SetTargetFPS(DISPLAY_FPS);
 

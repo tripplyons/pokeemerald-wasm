@@ -1,10 +1,4 @@
-// Headless core of the pokeemerald wasm2c native port.
-//
-// This module owns the wasm2c instance, the GBA BIOS/syscall shims
-// (w2c_env_*), pad input, flash save storage, and framebuffer access.
-// It intentionally has no raylib or other GUI dependency so the engine
-// can be driven by the raylib frontend, the headless benchmark, or any
-// other host.
+// Shared engine API for the native desktop, benchmark, and Kindle frontends.
 #ifndef POKEEMERALD_NATIVE_ENGINE_H
 #define POKEEMERALD_NATIVE_ENGINE_H
 
@@ -31,7 +25,8 @@
 
 typedef struct NativeEngine NativeEngine;
 
-// Creates an engine instance with an erased (0xff) flash save.
+// Creates the process-wide engine with an erased (0xff) flash save.
+// Returns NULL if an engine is already active. Destroy before creating another.
 // Load a save with native_engine_load_flash(), then call
 // native_engine_boot() exactly once before running frames.
 NativeEngine *native_engine_create(void);
@@ -67,5 +62,10 @@ uint32_t native_engine_save_flash_if_changed(NativeEngine *engine, const char *p
 // Returns zero when the WASM sprite ordering regression checks pass.
 // Bits 0-2 identify reset, inactive-slot, and invisible-slot failures.
 uint32_t native_engine_check_sprite_sort(NativeEngine *engine);
+
+uint32_t native_engine_battle_shortcut_count(NativeEngine *engine);
+uint32_t native_engine_battle_shortcut_type(NativeEngine *engine, uint32_t index);
+const char *native_engine_battle_shortcut_label(NativeEngine *engine, uint32_t index);
+void native_engine_battle_shortcut_select(NativeEngine *engine, uint32_t index);
 
 #endif // POKEEMERALD_NATIVE_ENGINE_H

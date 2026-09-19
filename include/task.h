@@ -6,7 +6,12 @@
 #define TASK_NONE TAIL_SENTINEL
 
 #define NUM_TASKS 16
+#if NATIVE
+// Native menu structs contain host pointers and share this task storage.
+#define NUM_TASK_DATA 32
+#else
 #define NUM_TASK_DATA 16
+#endif
 
 typedef void (*TaskFunc)(u8 taskId);
 

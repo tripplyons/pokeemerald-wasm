@@ -11,6 +11,12 @@
 #include "trainer_hill.h"
 #include "link.h"
 #include "constants/game_stat.h"
+#if NATIVE
+#include "native_save.h"
+#define SAVE_BLOCK1_STORAGE gNativeSaveBlock1
+#else
+#define SAVE_BLOCK1_STORAGE struct SaveBlock1
+#endif
 
 static u16 CalculateChecksum(void *, u16);
 static bool8 ReadFlashSector(u8, struct SaveSector *);
@@ -56,10 +62,10 @@ struct
 {
     SAVEBLOCK_CHUNK(struct SaveBlock2, 0), // SECTOR_ID_SAVEBLOCK2
 
-    SAVEBLOCK_CHUNK(struct SaveBlock1, 0), // SECTOR_ID_SAVEBLOCK1_START
-    SAVEBLOCK_CHUNK(struct SaveBlock1, 1),
-    SAVEBLOCK_CHUNK(struct SaveBlock1, 2),
-    SAVEBLOCK_CHUNK(struct SaveBlock1, 3), // SECTOR_ID_SAVEBLOCK1_END
+    SAVEBLOCK_CHUNK(SAVE_BLOCK1_STORAGE, 0), // SECTOR_ID_SAVEBLOCK1_START
+    SAVEBLOCK_CHUNK(SAVE_BLOCK1_STORAGE, 1),
+    SAVEBLOCK_CHUNK(SAVE_BLOCK1_STORAGE, 2),
+    SAVEBLOCK_CHUNK(SAVE_BLOCK1_STORAGE, 3), // SECTOR_ID_SAVEBLOCK1_END
 
     SAVEBLOCK_CHUNK(struct PokemonStorage, 0), // SECTOR_ID_PKMN_STORAGE_START
     SAVEBLOCK_CHUNK(struct PokemonStorage, 1),
@@ -75,7 +81,7 @@ struct
 // These will produce an error if a save struct is larger than the space
 // alloted for it in the flash.
 STATIC_ASSERT(sizeof(struct SaveBlock2) <= SECTOR_DATA_SIZE, SaveBlock2FreeSpace);
-STATIC_ASSERT(sizeof(struct SaveBlock1) <= SECTOR_DATA_SIZE * (SECTOR_ID_SAVEBLOCK1_END - SECTOR_ID_SAVEBLOCK1_START + 1), SaveBlock1FreeSpace);
+STATIC_ASSERT(sizeof(SAVE_BLOCK1_STORAGE) <= SECTOR_DATA_SIZE * (SECTOR_ID_SAVEBLOCK1_END - SECTOR_ID_SAVEBLOCK1_START + 1), SaveBlock1FreeSpace);
 STATIC_ASSERT(sizeof(struct PokemonStorage) <= SECTOR_DATA_SIZE * (SECTOR_ID_PKMN_STORAGE_END - SECTOR_ID_PKMN_STORAGE_START + 1), PokemonStorageFreeSpace);
 
 COMMON_DATA u16 gLastWrittenSector = 0;
@@ -185,6 +191,9 @@ static u8 HandleWriteSector(u16 sectorId, const struct SaveSectorLocation *locat
     sector %= NUM_SECTORS_PER_SLOT;
     sector += NUM_SECTORS_PER_SLOT * (gSaveCounter % NUM_SAVE_SLOTS);
 
+#if NATIVE
+    NativePackSaveBlock1();
+#endif
     // Get current save data
     data = locations[sectorId].data;
     size = locations[sectorId].size;
@@ -319,6 +328,9 @@ static u8 HandleReplaceSector(u16 sectorId, const struct SaveSectorLocation *loc
     sector %= NUM_SECTORS_PER_SLOT;
     sector += NUM_SECTORS_PER_SLOT * (gSaveCounter % NUM_SAVE_SLOTS);
 
+#if NATIVE
+    NativePackSaveBlock1();
+#endif
     // Get current save data
     data = locations[sectorId].data;
     size = locations[sectorId].size;
@@ -476,6 +488,9 @@ static u8 TryLoadSaveSlot(u16 sectorId, struct SaveSectorLocation *locations)
     {
         status = GetSaveValidStatus(locations);
         CopySaveSlotData(FULL_SAVE_SLOT, locations);
+#if NATIVE
+        NativeUnpackSaveBlock1();
+#endif
     }
 
     return status;
@@ -693,7 +708,11 @@ static void UpdateSaveAddresses(void)
 
     for (i = SECTOR_ID_SAVEBLOCK1_START; i <= SECTOR_ID_SAVEBLOCK1_END; i++)
     {
+#if NATIVE
+        gRamSaveSectorLocations[i].data = gNativeSaveBlock1 + sSaveSlotLayout[i].offset;
+#else
         gRamSaveSectorLocations[i].data = (void *)(gSaveBlock1Ptr) + sSaveSlotLayout[i].offset;
+#endif
         gRamSaveSectorLocations[i].size = sSaveSlotLayout[i].size;
     }
 

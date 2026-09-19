@@ -1,4 +1,4 @@
-#include "pokeemerald_wasm2c.h"
+#include "native_engine.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -28,10 +28,6 @@
 
 #define DISPLAY_WIDTH 240
 #define DISPLAY_HEIGHT 160
-#define REG_KEYINPUT 0x04000130u
-#define KEY_MASK 0x03ffu
-#define FLASH_BASE 0x0e000000u
-#define FLASH_SIZE (128u * 1024u)
 #define DEFAULT_SAVE_PATH "build/native/pokeemerald-kindle.sav"
 #define SAVE_FLUSH_FRAMES 60
 #define DISPLAY_FPS 60
@@ -49,288 +45,6 @@
 #define BUTTON_R      (1u << 8)
 #define BUTTON_L      (1u << 9)
 #define BUTTON_EXIT   (1u << 10)
-
-typedef w2c_0x24pokeemerald0x2Ewasm Pokeemerald;
-
-struct w2c_env {
-    Pokeemerald *instance;
-};
-
-static wasm_rt_memory_t *memory_for(struct w2c_env *env)
-{
-    return w2c_0x24pokeemerald0x2Ewasm_memory(env->instance);
-}
-
-static uint8_t *memory_data(struct w2c_env *env)
-{
-    return memory_for(env)->data;
-}
-
-static bool valid_range(struct w2c_env *env, uint32_t addr, uint32_t size)
-{
-    wasm_rt_memory_t *memory = memory_for(env);
-    return addr <= memory->size && size <= memory->size - addr;
-}
-
-static uint16_t read_u16(struct w2c_env *env, uint32_t addr)
-{
-    uint8_t *mem = memory_data(env);
-    return (uint16_t)(mem[addr] | (mem[addr + 1] << 8));
-}
-
-static int16_t read_s16(struct w2c_env *env, uint32_t addr)
-{
-    return (int16_t)read_u16(env, addr);
-}
-
-static uint32_t read_u32(struct w2c_env *env, uint32_t addr)
-{
-    uint8_t *mem = memory_data(env);
-    return (uint32_t)mem[addr]
-        | ((uint32_t)mem[addr + 1] << 8)
-        | ((uint32_t)mem[addr + 2] << 16)
-        | ((uint32_t)mem[addr + 3] << 24);
-}
-
-static int32_t read_s32(struct w2c_env *env, uint32_t addr)
-{
-    return (int32_t)read_u32(env, addr);
-}
-
-static void write_u16(struct w2c_env *env, uint32_t addr, uint16_t value)
-{
-    uint8_t *mem = memory_data(env);
-    mem[addr] = value & 0xff;
-    mem[addr + 1] = value >> 8;
-}
-
-static void write_u32(struct w2c_env *env, uint32_t addr, uint32_t value)
-{
-    uint8_t *mem = memory_data(env);
-    mem[addr] = value & 0xff;
-    mem[addr + 1] = (value >> 8) & 0xff;
-    mem[addr + 2] = (value >> 16) & 0xff;
-    mem[addr + 3] = value >> 24;
-}
-
-static void write_s16(struct w2c_env *env, uint32_t addr, int32_t value)
-{
-    write_u16(env, addr, (uint16_t)value);
-}
-
-static void copy_units(struct w2c_env *env, uint32_t src, uint32_t dst, uint32_t count, uint32_t size, bool fill)
-{
-    uint8_t *mem = memory_data(env);
-
-    if (!valid_range(env, src, size) || !valid_range(env, dst, count * size))
-        return;
-
-    for (uint32_t i = 0; i < count; i++) {
-        uint32_t from = fill ? src : src + i * size;
-        memmove(mem + dst + i * size, mem + from, size);
-    }
-}
-
-static void lz77(struct w2c_env *env, uint32_t src, uint32_t dst)
-{
-    uint8_t *mem = memory_data(env);
-    uint32_t size = mem[src + 1] | (mem[src + 2] << 8) | (mem[src + 3] << 16);
-    uint32_t s = src + 4;
-    uint32_t d = dst;
-    uint32_t end = dst + size;
-
-    if (!valid_range(env, dst, size))
-        return;
-
-    while (d < end) {
-        uint8_t flags = mem[s++];
-        for (int bit = 7; bit >= 0 && d < end; bit--) {
-            if (flags & (1 << bit)) {
-                uint32_t pair = ((uint32_t)mem[s] << 8) | mem[s + 1];
-                s += 2;
-                uint32_t length = (pair >> 12) + 3;
-                uint32_t disp = (pair & 0xfff) + 1;
-                while (length-- && d < end) {
-                    mem[d] = mem[d - disp];
-                    d++;
-                }
-            } else {
-                mem[d++] = mem[s++];
-            }
-        }
-    }
-}
-
-static void rl(struct w2c_env *env, uint32_t src, uint32_t dst)
-{
-    uint8_t *mem = memory_data(env);
-    uint32_t size = mem[src + 1] | (mem[src + 2] << 8) | (mem[src + 3] << 16);
-    uint32_t s = src + 4;
-    uint32_t d = dst;
-    uint32_t end = dst + size;
-
-    if (!valid_range(env, dst, size))
-        return;
-
-    while (d < end) {
-        uint8_t flag = mem[s++];
-        if (flag & 0x80) {
-            uint32_t count = (flag & 0x7f) + 3;
-            uint8_t value = mem[s++];
-            while (count-- && d < end)
-                mem[d++] = value;
-        } else {
-            uint32_t count = (flag & 0x7f) + 1;
-            while (count-- && d < end)
-                mem[d++] = mem[s++];
-        }
-    }
-}
-
-static void bg_affine_set(struct w2c_env *env, uint32_t src, uint32_t dst, uint32_t count)
-{
-    for (uint32_t i = 0; i < count; i++) {
-        uint32_t s = src + i * 20;
-        uint32_t d = dst + i * 16;
-        int32_t texX = read_s32(env, s);
-        int32_t texY = read_s32(env, s + 4);
-        int16_t scrX = read_s16(env, s + 8);
-        int16_t scrY = read_s16(env, s + 10);
-        int16_t xScale = read_s16(env, s + 12);
-        int16_t yScale = read_s16(env, s + 14);
-        uint16_t rotation = read_u16(env, s + 16);
-        double angle = rotation * M_PI * 2.0 / 0x10000;
-        double sn = sin(angle) * 256.0;
-        double cs = cos(angle) * 256.0;
-        int32_t a = (int32_t)(cs * xScale / 256.0);
-        int32_t b = (int32_t)(-sn * xScale / 256.0);
-        int32_t c = (int32_t)(sn * yScale / 256.0);
-        int32_t e = (int32_t)(cs * yScale / 256.0);
-        write_s16(env, d, a);
-        write_s16(env, d + 2, b);
-        write_s16(env, d + 4, c);
-        write_s16(env, d + 6, e);
-        write_u32(env, d + 8, (uint32_t)(texX - scrX * a - scrY * b));
-        write_u32(env, d + 12, (uint32_t)(texY - scrX * c - scrY * e));
-    }
-}
-
-static void obj_affine_set(struct w2c_env *env, uint32_t src, uint32_t dst, uint32_t count, uint32_t offset)
-{
-    for (uint32_t i = 0; i < count; i++) {
-        uint32_t s = src + i * 6;
-        uint32_t d = dst + i * offset * 4;
-        int16_t xScale = read_s16(env, s);
-        int16_t yScale = read_s16(env, s + 2);
-        uint16_t rotation = read_u16(env, s + 4);
-        double angle = rotation * M_PI * 2.0 / 0x10000;
-        double sn = sin(angle) * 256.0;
-        double cs = cos(angle) * 256.0;
-        write_s16(env, d, (int32_t)(cs * xScale / 256.0));
-        write_s16(env, d + offset, (int32_t)(-sn * xScale / 256.0));
-        write_s16(env, d + offset * 2, (int32_t)(sn * yScale / 256.0));
-        write_s16(env, d + offset * 3, (int32_t)(cs * yScale / 256.0));
-    }
-}
-
-static void copy_oam_matrices(struct w2c_env *env, uint32_t src, uint32_t dest,
-                              uint32_t dummy, uint32_t oam_count, uint32_t oam_limit)
-{
-    uint8_t *mem = memory_data(env);
-    uint8_t *restrict source;
-    uint8_t *restrict output;
-    uint64_t dummy_oam;
-
-    if (!valid_range(env, src, 32 * 8) || !valid_range(env, dest, 128 * 8)
-        || !valid_range(env, dummy, sizeof(dummy_oam)) || oam_count > oam_limit || oam_limit > 128)
-        return;
-
-    source = mem + src;
-    output = mem + dest;
-    memcpy(&dummy_oam, mem + dummy, sizeof(dummy_oam));
-    for (uint32_t i = oam_count; i < oam_limit; i++)
-        memcpy(output + i * 8, &dummy_oam, sizeof(dummy_oam));
-
-    output += 6;
-    for (uint32_t matrix = 0; matrix < 32; matrix++) {
-        uint16_t value;
-        memcpy(&value, source, sizeof(value));
-        memcpy(output, &value, sizeof(value));
-        memcpy(&value, source + 2, sizeof(value));
-        memcpy(output + 8, &value, sizeof(value));
-        memcpy(&value, source + 4, sizeof(value));
-        memcpy(output + 16, &value, sizeof(value));
-        memcpy(&value, source + 6, sizeof(value));
-        memcpy(output + 24, &value, sizeof(value));
-        source += 8;
-        output += 32;
-    }
-}
-
-static uint32_t hash_bytes(const uint8_t *bytes, size_t size)
-{
-    uint32_t hash = 2166136261u;
-    for (size_t i = 0; i < size; i++) {
-        hash ^= bytes[i];
-        hash *= 16777619u;
-    }
-    return hash;
-}
-
-static void ensure_save_dir(void)
-{
-    mkdir("build", 0777);
-    mkdir("build/native", 0777);
-}
-
-static uint8_t *flash_bytes(Pokeemerald *instance)
-{
-    return w2c_0x24pokeemerald0x2Ewasm_memory(instance)->data + FLASH_BASE;
-}
-
-static uint32_t load_flash(Pokeemerald *instance, const char *path)
-{
-    uint8_t *flash = flash_bytes(instance);
-    memset(flash, 0xff, FLASH_SIZE);
-
-    FILE *file = fopen(path, "rb");
-    if (file) {
-        fseek(file, 0, SEEK_END);
-        long size = ftell(file);
-        rewind(file);
-        if (size == FLASH_SIZE)
-            (void)fread(flash, 1, FLASH_SIZE, file);
-        fclose(file);
-    }
-
-    return hash_bytes(flash, FLASH_SIZE);
-}
-
-static uint32_t save_flash_if_changed(Pokeemerald *instance, const char *path, uint32_t lastHash, bool force)
-{
-    uint8_t *flash = flash_bytes(instance);
-    uint32_t hash = hash_bytes(flash, FLASH_SIZE);
-    if (!force && hash == lastHash)
-        return lastHash;
-
-    ensure_save_dir();
-    FILE *file = fopen(path, "wb");
-    if (file) {
-        (void)fwrite(flash, 1, FLASH_SIZE, file);
-        fclose(file);
-        return hash;
-    }
-
-    return lastHash;
-}
-
-static void write_keys(Pokeemerald *instance, uint32_t held)
-{
-    uint8_t *mem = w2c_0x24pokeemerald0x2Ewasm_memory(instance)->data;
-    uint16_t value = KEY_MASK ^ (held & KEY_MASK);
-    mem[REG_KEYINPUT] = value & 0xff;
-    mem[REG_KEYINPUT + 1] = value >> 8;
-}
 
 #if defined(__linux__)
 
@@ -809,11 +523,10 @@ static bool contains(RectI rect, int x, int y)
     return x >= rect.x && y >= rect.y && x < rect.x + rect.width && y < rect.y + rect.height;
 }
 
-static BattleShortcutLayout make_battle_shortcuts(Pokeemerald *instance, const KindleLayout *base, int width, int height)
+static BattleShortcutLayout make_battle_shortcuts(NativeEngine *engine, const KindleLayout *base, int width, int height)
 {
     BattleShortcutLayout layout;
-    wasm_rt_memory_t *memory = w2c_0x24pokeemerald0x2Ewasm_memory(instance);
-    uint32_t count = w2c_0x24pokeemerald0x2Ewasm_WasmBattleShortcutCount(instance);
+    uint32_t count = native_engine_battle_shortcut_count(engine);
     int margin = width / 24;
     int gap = margin / 3;
     int columns = 2;
@@ -855,15 +568,15 @@ static BattleShortcutLayout make_battle_shortcuts(Pokeemerald *instance, const K
         count = MAX_BATTLE_SHORTCUTS;
     for (uint32_t i = 0; i < count; i++) {
         BattleShortcut *shortcut = &layout.buttons[layout.count];
-        uint32_t labelPtr = w2c_0x24pokeemerald0x2Ewasm_WasmBattleShortcutLabel(instance, i);
+        const char *label = native_engine_battle_shortcut_label(engine, i);
         int row = (int)(i / columns);
         int column = (int)(i % columns);
 
-        if (labelPtr >= memory->size)
+        if (!label)
             continue;
         shortcut->index = i;
-        shortcut->type = w2c_0x24pokeemerald0x2Ewasm_WasmBattleShortcutType(instance, i);
-        snprintf(shortcut->label, sizeof(shortcut->label), "%s", (const char *)memory->data + labelPtr);
+        shortcut->type = native_engine_battle_shortcut_type(engine, i);
+        snprintf(shortcut->label, sizeof(shortcut->label), "%s", label);
         shortcut->rect = (RectI){margin + column * (buttonWidth + gap), y + row * (buttonHeight + gap), buttonWidth, buttonHeight};
         layout.count++;
     }
@@ -1101,89 +814,6 @@ static void close_inputs(InputDevice *devices, int deviceCount)
 
 #endif
 
-u32 w2c_env_ArcTan2(struct w2c_env *env, u32 x, u32 y)
-{
-    (void)env;
-    double angle = atan2((double)(int32_t)y, (double)(int32_t)x);
-    if (angle < 0.0)
-        angle += M_PI * 2.0;
-    return (u32)(angle * 65536.0 / (M_PI * 2.0));
-}
-
-void w2c_env_BgAffineSet(struct w2c_env *env, u32 src, u32 dest, u32 count) { bg_affine_set(env, src, dest, count); }
-void w2c_env_CpuFastSet(struct w2c_env *env, u32 src, u32 dest, u32 mode) { copy_units(env, src, dest, mode & 0x1fffff, 4, (mode >> 24) & 1); }
-void w2c_env_CpuSet(struct w2c_env *env, u32 src, u32 dest, u32 mode) { copy_units(env, src, dest, mode & 0x1fffff, ((mode >> 26) & 1) ? 4 : 2, (mode >> 24) & 1); }
-u32 w2c_env_Div(struct w2c_env *env, u32 num, u32 den) { (void)env; return den ? (u32)((int32_t)num / (int32_t)den) : 0; }
-void w2c_env_LZ77UnCompVram(struct w2c_env *env, u32 src, u32 dest) { lz77(env, src, dest); }
-void w2c_env_LZ77UnCompWram(struct w2c_env *env, u32 src, u32 dest) { lz77(env, src, dest); }
-void w2c_env_ObjAffineSet(struct w2c_env *env, u32 src, u32 dest, u32 count, u32 offset) { obj_affine_set(env, src, dest, count, offset); }
-void w2c_env_WasmCopyOamMatrices(struct w2c_env *env, u32 src, u32 dest, u32 dummy, u32 count, u32 limit) { copy_oam_matrices(env, src, dest, dummy, count, limit); }
-void w2c_env_RLUnCompVram(struct w2c_env *env, u32 src, u32 dest) { rl(env, src, dest); }
-void w2c_env_RLUnCompWram(struct w2c_env *env, u32 src, u32 dest) { rl(env, src, dest); }
-u32 w2c_env_Sqrt(struct w2c_env *env, u32 value) { (void)env; return (u32)sqrt((double)value); }
-u32 w2c_env_strcmp(struct w2c_env *env, u32 a, u32 b) { return (u32)strcmp((const char *)memory_data(env) + a, (const char *)memory_data(env) + b); }
-
-void w2c_env_FadeOutBody(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_GameCubeMultiBoot_ExecuteProgram(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_GameCubeMultiBoot_HandleSerialInterrupt(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_GameCubeMultiBoot_Init(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_GameCubeMultiBoot_Main(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_GameCubeMultiBoot_Quit(struct w2c_env *env) { (void)env; }
-u32 w2c_env_IsPokemonCryPlaying(struct w2c_env *env, u32 a) { (void)env; (void)a; return 0; }
-u32 w2c_env_MultiBoot(struct w2c_env *env, u32 a) { (void)env; (void)a; return 0; }
-void w2c_env_RealClearChain(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_RegisterRamReset(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_SampleFreqSet(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_SetPokemonCryChorus(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_SetPokemonCryLength(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_SetPokemonCryPanpot(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_SetPokemonCryPitch(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_SetPokemonCryProgress(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_SetPokemonCryRelease(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_SetPokemonCryStereo(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-u32 w2c_env_SetPokemonCryTone(struct w2c_env *env, u32 a) { (void)env; (void)a; return 0; }
-void w2c_env_SetPokemonCryVolume(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_SoftReset(struct w2c_env *env, u32 a) { (void)env; (void)a; }
-void w2c_env_TrackStop(struct w2c_env *env, u32 a, u32 b) { (void)env; (void)a; (void)b; }
-void w2c_env_TrkVolPitSet(struct w2c_env *env, u32 a, u32 b) { (void)env; (void)a; (void)b; }
-void w2c_env_VBlankIntrWait(struct w2c_env *env) { (void)env; }
-
-#define NOOP_PLY(name) void w2c_env_##name(struct w2c_env *env, u32 a, u32 b) { (void)env; (void)a; (void)b; }
-NOOP_PLY(ply_bend)
-NOOP_PLY(ply_bendr)
-NOOP_PLY(ply_endtie)
-NOOP_PLY(ply_fine)
-NOOP_PLY(ply_goto)
-NOOP_PLY(ply_keysh)
-NOOP_PLY(ply_lfodl)
-NOOP_PLY(ply_lfos)
-NOOP_PLY(ply_mod)
-NOOP_PLY(ply_modt)
-NOOP_PLY(ply_pan)
-NOOP_PLY(ply_patt)
-NOOP_PLY(ply_pend)
-NOOP_PLY(ply_port)
-NOOP_PLY(ply_prio)
-NOOP_PLY(ply_rept)
-NOOP_PLY(ply_tempo)
-NOOP_PLY(ply_tune)
-NOOP_PLY(ply_voice)
-NOOP_PLY(ply_vol)
-NOOP_PLY(ply_xatta)
-NOOP_PLY(ply_xcmd_0D)
-NOOP_PLY(ply_xdeca)
-NOOP_PLY(ply_xiecl)
-NOOP_PLY(ply_xiecv)
-NOOP_PLY(ply_xleng)
-NOOP_PLY(ply_xrele)
-NOOP_PLY(ply_xsust)
-NOOP_PLY(ply_xswee)
-NOOP_PLY(ply_xtype)
-NOOP_PLY(ply_xwait)
-NOOP_PLY(ply_xwave)
-NOOP_PLY(ply_xxx)
-#undef NOOP_PLY
-
 #if defined(__linux__)
 int main(int argc, char **argv)
 {
@@ -1221,18 +851,18 @@ int main(int argc, char **argv)
     if (inputCount == 0)
         fprintf(stderr, "warning: no input devices opened; use --input /dev/input/eventN if touch is unavailable\n");
 
-    wasm_rt_init();
-    Pokeemerald instance;
-    memset(&instance, 0, sizeof(instance));
-    struct w2c_env env = { .instance = &instance };
-    wasm2c_0x24pokeemerald0x2Ewasm_instantiate(&instance, &env);
-
-    uint32_t lastSaveHash = load_flash(&instance, savePath);
-    write_keys(&instance, 0);
-    w2c_0x24pokeemerald0x2Ewasm_AgbMain(&instance);
+    NativeEngine *engine = native_engine_create();
+    if (!engine) {
+        fprintf(stderr, "could not create native engine\n");
+        close_inputs(inputs, inputCount);
+        close_framebuffer(&fb);
+        return 1;
+    }
+    uint32_t lastSaveHash = native_engine_load_flash(engine, savePath);
+    native_engine_boot(engine);
 
     KindleLayout layout = make_layout(fb.width, fb.height);
-    BattleShortcutLayout shortcuts = make_battle_shortcuts(&instance, &layout, fb.width, fb.height);
+    BattleShortcutLayout shortcuts = make_battle_shortcuts(engine, &layout, fb.width, fb.height);
     bool shortcutsDismissed = false;
     uint32_t dismissedShortcutSignature = 0;
     int previousShortcut = -1;
@@ -1249,7 +879,7 @@ int main(int argc, char **argv)
         frameAccumulator += elapsed * 60.0;
 
         poll_input(inputs, inputCount, fb.width, fb.height);
-        shortcuts = make_battle_shortcuts(&instance, &layout, fb.width, fb.height);
+        shortcuts = make_battle_shortcuts(engine, &layout, fb.width, fb.height);
         if (shortcutsDismissed) {
             if (shortcuts.signature == dismissedShortcutSignature)
                 shortcuts.count = 0;
@@ -1270,11 +900,11 @@ int main(int argc, char **argv)
         }
         shortcuts.pressedIndex = shortcutPressed;
         if (shortcutPressed >= 0 && shortcutPressed != previousShortcut)
-            w2c_0x24pokeemerald0x2Ewasm_WasmBattleShortcutSelect(&instance, shortcuts.buttons[shortcutPressed].index);
+            native_engine_battle_shortcut_select(engine, shortcuts.buttons[shortcutPressed].index);
         previousShortcut = shortcutPressed;
         if (held & BUTTON_EXIT)
             gQuit = 1;
-        write_keys(&instance, held);
+        native_engine_set_keys(engine, held);
 
         int framesToRun = (int)frameAccumulator;
         if (framesToRun > 8)
@@ -1284,15 +914,14 @@ int main(int argc, char **argv)
         frameAccumulator -= framesToRun;
 
         for (int i = 0; i < framesToRun; i++) {
-            w2c_0x24pokeemerald0x2Ewasm_WasmRunFrame(&instance);
+            native_engine_run_frame(engine);
             frame++;
         }
 
         now = monotonic_seconds();
         if (now >= nextDisplay || frameLimit > 0) {
-            w2c_0x24pokeemerald0x2Ewasm_WasmRenderFrame(&instance);
-            uint32_t displayPtr = w2c_0x24pokeemerald0x2Ewasm_WasmDisplayBuffer(&instance);
-            const uint8_t *display = w2c_0x24pokeemerald0x2Ewasm_memory(&instance)->data + displayPtr;
+            native_engine_render(engine);
+            const uint8_t *display = native_engine_display_buffer(engine);
             draw_game(&fb, &layout, display);
             draw_ui(&fb, &layout, &shortcuts, held);
             refresh_framebuffer(&fb, (RectI){0, 0, fb.width, fb.height}, false);
@@ -1300,7 +929,7 @@ int main(int argc, char **argv)
         }
 
         if (framesToRun > 0 && frame % SAVE_FLUSH_FRAMES == 0)
-            lastSaveHash = save_flash_if_changed(&instance, savePath, lastSaveHash, false);
+            lastSaveHash = native_engine_save_flash_if_changed(engine, savePath, lastSaveHash, false);
         if (frameLimit > 0 && frame >= (uint32_t)frameLimit)
             break;
 
@@ -1309,10 +938,9 @@ int main(int argc, char **argv)
             sleep_seconds(sleepFor < 0.025 ? sleepFor : 0.025);
     }
 
-    lastSaveHash = save_flash_if_changed(&instance, savePath, lastSaveHash, true);
+    lastSaveHash = native_engine_save_flash_if_changed(engine, savePath, lastSaveHash, true);
     (void)lastSaveHash;
-    wasm2c_0x24pokeemerald0x2Ewasm_free(&instance);
-    wasm_rt_free();
+    native_engine_destroy(engine);
     close_inputs(inputs, inputCount);
     close_framebuffer(&fb);
     return 0;

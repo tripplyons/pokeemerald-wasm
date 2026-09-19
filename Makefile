@@ -17,13 +17,16 @@ COMPARE     ?= 0
 
 WASM_CC ?= $(shell { command -v /opt/homebrew/opt/llvm/bin/clang || command -v /usr/local/opt/llvm/bin/clang || command -v clang; })
 WASM_LD ?= $(shell { command -v wasm-ld || find "$$HOME/.rustup/toolchains" -path '*/gcc-ld/wasm-ld' -type f 2>/dev/null | head -n1; })
-WASM2C ?= $(shell { command -v wasm2c || { test -x /opt/homebrew/opt/wabt/bin/wasm2c && echo /opt/homebrew/opt/wabt/bin/wasm2c; } || { test -x /usr/local/opt/wabt/bin/wasm2c && echo /usr/local/opt/wabt/bin/wasm2c; }; } 2>/dev/null)
-WABT_PREFIX ?= $(shell if [ -n "$(WASM2C)" ]; then dirname "$$(dirname "$(WASM2C)")"; else brew --prefix wabt 2>/dev/null || true; fi)
 NATIVE_CC ?= $(shell { command -v clang || command -v cc; })
 include tools/native/performance.mk
-KINDLE_CC ?= $(NATIVE_CC)
-KINDLE_CFLAGS ?= -O2 -DNDEBUG
-KINDLE_WABT_PREFIX ?= $(WABT_PREFIX)
+KINDLE_CC ?= zig cc
+KINDLE_CFLAGS ?= -target arm-linux-musleabihf -mcpu=cortex_a7 -O2 -DNDEBUG -static
+KINDLE_LDFLAGS ?=
+ifeq ($(KINDLE_BUILD),1)
+NATIVE_CC := $(KINDLE_CC)
+NATIVE_CFLAGS := $(KINDLE_CFLAGS)
+NATIVE_LDFLAGS := $(KINDLE_LDFLAGS)
+endif
 RAYLIB_CFLAGS ?= $(shell pkg-config --cflags raylib 2>/dev/null)
 RAYLIB_LIBS ?= $(shell pkg-config --libs raylib 2>/dev/null)
 
@@ -87,21 +90,15 @@ WASM_BUILD_DIR := $(BUILD_DIR)/wasm
 WASM_OBJ_DIR := $(WASM_BUILD_DIR)/obj
 WASM := $(WASM_BUILD_DIR)/$(FILE_NAME).wasm
 WASM_SOUND_HEADER := $(WASM_BUILD_DIR)/wasm_sound.h
-NATIVE_BUILD_DIR := $(BUILD_DIR)/native
-NATIVE_WASM2C_C := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.c
-NATIVE_WASM2C_H := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.h
-NATIVE_WASM2C_O := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.o
+NATIVE_BUILD_DIR := $(BUILD_DIR)/native$(if $(filter 1,$(KINDLE_BUILD)),/kindle)
 NATIVE_ENGINE_H := tools/native/native_engine.h
 NATIVE_ENGINE_O := $(NATIVE_BUILD_DIR)/native_engine.o
 NATIVE_RAYLIB_MAIN_O := $(NATIVE_BUILD_DIR)/raylib_main.o
 NATIVE_RAYLIB := $(NATIVE_BUILD_DIR)/pokeemerald-native
 NATIVE_BENCH_O := $(NATIVE_BUILD_DIR)/bench_main.o
 NATIVE_BENCH := $(NATIVE_BUILD_DIR)/pokeemerald-bench
-KINDLE_WASM2C_O := $(NATIVE_BUILD_DIR)/pokeemerald_wasm2c.kindle.o
-KINDLE_WASM_RT_O := $(NATIVE_BUILD_DIR)/wasm-rt-impl.kindle.o
-KINDLE_WASM_RT_MEM_O := $(NATIVE_BUILD_DIR)/wasm-rt-mem-impl.kindle.o
-KINDLE_FRONTEND_O := $(NATIVE_BUILD_DIR)/wasm_native_kindle.o
-NATIVE_KINDLE := $(NATIVE_BUILD_DIR)/pokeemerald-kindle
+KINDLE_FRONTEND_O := $(NATIVE_BUILD_DIR)/kindle_main.o
+NATIVE_KINDLE := $(BUILD_DIR)/native/pokeemerald-kindle
 ASSETS_DIR_NAME := $(BUILD_DIR)/assets
 
 ELF_NAME := $(ROM_NAME:.gba=.elf)
@@ -191,7 +188,7 @@ MAKEFLAGS += --no-print-directory
 .DELETE_ON_ERROR:
 
 RULES_NO_SCAN += libagbsyscall clean clean-assets tidy tidymodern tidynonmodern generated clean-generated wasm-assets wasm-text clean-wasm clean-native serve-wasm
-.PHONY: all rom modern compare wasm wasm-assets native-raylib native-bench clean-wasm clean-native serve-wasm wrangler-site
+.PHONY: all rom modern compare wasm wasm-assets native-raylib native-bench native-kindle clean-wasm clean-native serve-wasm wrangler-site
 .PHONY: $(RULES_NO_SCAN)
 
 infoshell = $(foreach line, $(shell $1 | sed "s/ /__SPACE__/g"), $(info $(subst __SPACE__, ,$(line))))
@@ -201,7 +198,7 @@ NODEP ?= 0
 # Check if we need to pre-build tools and generate assets based on the chosen rule.
 SETUP_PREREQS ?= 1
 # Disable dependency scanning for the normal GBA objects when only the wasm build needs C sources.
-ifneq (,$(filter wasm native-raylib native-bench,$(MAKECMDGOALS)))
+ifneq (,$(filter wasm native-raylib native-bench native-kindle native-test,$(MAKECMDGOALS)))
   NODEP := 1
   SETUP_PREREQS := 1
 endif
@@ -279,7 +276,12 @@ native-raylib: $(NATIVE_RAYLIB)
 
 native-bench: $(NATIVE_BENCH)
 
+ifeq ($(KINDLE_BUILD),1)
 native-kindle: $(NATIVE_KINDLE)
+else
+native-kindle:
+	$(MAKE) native-kindle KINDLE_BUILD=1
+endif
 
 wasm-assets: $(GFX)
 	uv run python tools/generate_wasm_assets.py
@@ -295,49 +297,6 @@ $(WASM_OBJ_DIR)/m4a.o: $(WASM_SOUND_HEADER)
 $(WASM): Makefile $(WASM_C_OBJS) $(WASM_DATA_OBJS)
 	@test -n "$(WASM_LD)" || { echo "wasm-ld not found; set WASM_LD=/path/to/wasm-ld"; exit 1; }
 	$(WASM_LD) $(WASM_LDFLAGS) --no-entry --allow-undefined --initial-memory=268435456 --max-memory=268435456 --export=AgbMain --export=WasmRunFrame --export-all -o $@ $(filter %.o,$^)
-
-$(NATIVE_WASM2C_C): $(WASM)
-	@test -n "$(WASM2C)" || { echo "wasm2c not found; install wabt or set WASM2C=/path/to/wasm2c"; exit 1; }
-	@mkdir -p $(NATIVE_BUILD_DIR)
-	$(WASM2C) $< -o $@
-
-$(NATIVE_WASM2C_H): $(NATIVE_WASM2C_C)
-	@:
-
-$(NATIVE_WASM2C_O): $(NATIVE_WASM2C_C) $(NATIVE_WASM2C_H) Makefile
-	@test -f "$(WABT_PREFIX)/lib/libwasm-rt-impl.a" || { echo "wabt wasm-rt library not found under $(WABT_PREFIX); set WABT_PREFIX=/path/to/wabt"; exit 1; }
-	$(NATIVE_CC) $(NATIVE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(WABT_PREFIX)/include -Wno-unused-function -Wno-parentheses-equality -c $< -o $@
-
-$(NATIVE_ENGINE_O): tools/native/native_engine.c $(NATIVE_WASM2C_H) $(NATIVE_ENGINE_H) Makefile
-	$(NATIVE_CC) $(NATIVE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(WABT_PREFIX)/include -c $< -o $@
-
-$(NATIVE_RAYLIB_MAIN_O): tools/native/raylib_main.c $(NATIVE_ENGINE_H) Makefile
-	@test -n "$(RAYLIB_LIBS)" || { echo "raylib pkg-config metadata not found; install raylib or set RAYLIB_CFLAGS/RAYLIB_LIBS"; exit 1; }
-	$(NATIVE_CC) $(NATIVE_CFLAGS) -I tools/native $(RAYLIB_CFLAGS) -c $< -o $@
-
-$(NATIVE_RAYLIB): $(NATIVE_WASM2C_O) $(NATIVE_ENGINE_O) $(NATIVE_RAYLIB_MAIN_O) Makefile
-	$(NATIVE_CC) $(NATIVE_CFLAGS) $(NATIVE_LDFLAGS) -o $@ $(NATIVE_WASM2C_O) $(NATIVE_ENGINE_O) $(NATIVE_RAYLIB_MAIN_O) $(WABT_PREFIX)/lib/libwasm-rt-impl.a $(RAYLIB_LIBS) -lm
-
-$(NATIVE_BENCH_O): tools/native/bench_main.c $(NATIVE_ENGINE_H) Makefile
-	$(NATIVE_CC) $(NATIVE_CFLAGS) -I tools/native -c $< -o $@
-
-$(NATIVE_BENCH): $(NATIVE_WASM2C_O) $(NATIVE_ENGINE_O) $(NATIVE_BENCH_O) Makefile
-	$(NATIVE_CC) $(NATIVE_CFLAGS) $(NATIVE_LDFLAGS) -o $@ $(NATIVE_WASM2C_O) $(NATIVE_ENGINE_O) $(NATIVE_BENCH_O) $(WABT_PREFIX)/lib/libwasm-rt-impl.a -lm
-
-$(KINDLE_WASM2C_O): $(NATIVE_WASM2C_C) $(NATIVE_WASM2C_H) Makefile
-	$(KINDLE_CC) $(KINDLE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(KINDLE_WABT_PREFIX)/include -Wno-unused-function -Wno-parentheses-equality -c $< -o $@
-
-$(KINDLE_WASM_RT_O): $(KINDLE_WABT_PREFIX)/share/wabt/wasm2c/wasm-rt-impl.c Makefile
-	$(KINDLE_CC) $(KINDLE_CFLAGS) -I $(KINDLE_WABT_PREFIX)/include -I $(KINDLE_WABT_PREFIX)/share/wabt/wasm2c -c $< -o $@
-
-$(KINDLE_WASM_RT_MEM_O): $(KINDLE_WABT_PREFIX)/share/wabt/wasm2c/wasm-rt-mem-impl.c Makefile
-	$(KINDLE_CC) $(KINDLE_CFLAGS) -I $(KINDLE_WABT_PREFIX)/include -I $(KINDLE_WABT_PREFIX)/share/wabt/wasm2c -c $< -o $@
-
-$(KINDLE_FRONTEND_O): tools/wasm_native_kindle.c $(NATIVE_WASM2C_H) Makefile
-	$(KINDLE_CC) $(KINDLE_CFLAGS) -I $(NATIVE_BUILD_DIR) -I $(KINDLE_WABT_PREFIX)/include -c $< -o $@
-
-$(NATIVE_KINDLE): $(KINDLE_WASM2C_O) $(KINDLE_WASM_RT_O) $(KINDLE_WASM_RT_MEM_O) $(KINDLE_FRONTEND_O) Makefile
-	$(KINDLE_CC) $(KINDLE_CFLAGS) -o $@ $(KINDLE_WASM2C_O) $(KINDLE_WASM_RT_O) $(KINDLE_WASM_RT_MEM_O) $(KINDLE_FRONTEND_O) -lm
 
 $(WASM_OBJ_DIR)/sprite.o: Makefile
 $(WASM_OBJ_DIR)/sprite.o: WASM_OPT_FLAGS := -O3
@@ -396,6 +355,11 @@ include graphics_file_rules.mk
 include map_data_rules.mk
 include json_data_rules.mk
 include audio_rules.mk
+ifneq (,$(filter native-% $(BUILD_DIR)/native%,$(MAKECMDGOALS)))
+include tools/native/build.mk
+$(NATIVE_BUILD_DIR)/data/maps.o: $(LAYOUTS_DIR)/layouts.inc $(LAYOUTS_DIR)/layouts_table.inc $(MAPS_DIR)/headers.inc $(MAPS_DIR)/groups.inc $(MAPS_DIR)/connections.inc $(MAP_CONNECTIONS) $(MAP_HEADERS)
+$(NATIVE_BUILD_DIR)/data/map_events.o: $(MAPS_DIR)/events.inc $(MAP_EVENTS)
+endif
 
 $(WASM_OBJ_DIR)/maps.o: $(DATA_ASM_SUBDIR)/maps.s $(LAYOUTS_DIR)/layouts.inc $(LAYOUTS_DIR)/layouts_table.inc $(MAPS_DIR)/headers.inc $(MAPS_DIR)/groups.inc $(MAPS_DIR)/connections.inc $(MAP_CONNECTIONS) $(MAP_HEADERS)
 $(WASM_OBJ_DIR)/map_events.o: $(DATA_ASM_SUBDIR)/map_events.s $(MAPS_DIR)/events.inc $(MAP_EVENTS)
