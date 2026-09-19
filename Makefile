@@ -198,7 +198,7 @@ NODEP ?= 0
 # Check if we need to pre-build tools and generate assets based on the chosen rule.
 SETUP_PREREQS ?= 1
 # Disable dependency scanning for the normal GBA objects when only the wasm build needs C sources.
-ifneq (,$(filter wasm native-raylib native-bench native-kindle native-test,$(MAKECMDGOALS)))
+ifneq (,$(filter wasm native-raylib native-bench native-kindle native-test native-pgo,$(MAKECMDGOALS)))
   NODEP := 1
   SETUP_PREREQS := 1
 endif

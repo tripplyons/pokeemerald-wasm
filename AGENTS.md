@@ -112,8 +112,17 @@ checkpoints without charging the software renderer to engine FPS.
 `tools/native/run_bench.sh` builds and runs two passes against the golden
 hashes in `tools/native/bench_golden.json`, printing one JSON object
 `{"score": <mean aggregate scenario FPS>, "info": {...}}`; score is 0 on
-any hash mismatch, nondeterminism, or invalid timer sample. Regenerate
-goldens only after an intentional engine/rendering change:
+any hash mismatch, nondeterminism, or invalid timer sample.
+`info.scenario_render_us` reports the mean software-render time per scenario
+end state. It is measured after the end checkpoint and never feeds the score.
+
+`make native-pgo` builds an instrumented bench, trains a profile on the
+benchmark replay, writes `build/native/pgo/native.profdata`, and rebuilds
+`native-bench` with it. Later desktop native builds use the profile while it
+exists, so rerun `make native-pgo` after large engine changes and run
+`make clean-native` to return to a plain build. Kindle builds never use it.
+
+Regenerate goldens only after an intentional engine/rendering change:
 
 ```sh
 ./build/native/pokeemerald-bench --script tools/wasm_replays/mudkip_starter.txt --passes 2 --write-golden tools/native/bench_golden.json

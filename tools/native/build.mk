@@ -59,6 +59,9 @@ $(NATIVE_BUILD_DIR)/data/%.o: data/%.s tools/native/generate_data.py tools/wasm_
 
 $(NATIVE_C_OBJS): tools/native/prepare_source.py
 $(NATIVE_C_OBJS) $(NATIVE_DATA_OBJS) $(NATIVE_ENGINE_O) $(NATIVE_BIOS_O) $(NATIVE_RAYLIB_MAIN_O) $(NATIVE_BENCH_O) $(KINDLE_FRONTEND_O): tools/native/build.mk tools/native/performance.mk Makefile
+ifneq (,$(findstring -fprofile-use=$(NATIVE_PGO_PROFILE),$(NATIVE_CFLAGS)))
+$(NATIVE_C_OBJS) $(NATIVE_DATA_OBJS) $(NATIVE_ENGINE_O) $(NATIVE_BIOS_O) $(NATIVE_RAYLIB_MAIN_O) $(NATIVE_BENCH_O): $(NATIVE_PGO_PROFILE)
+endif
 -include $(NATIVE_C_OBJS:.o=.o.d) $(NATIVE_DATA_OBJS:.o=.d)
 
 ifeq ($(KINDLE_BUILD),1)
@@ -69,6 +72,19 @@ $(KINDLE_FRONTEND_O): tools/native/kindle_main.c $(NATIVE_ENGINE_H)
 $(NATIVE_KINDLE): $(NATIVE_C_OBJS) $(NATIVE_ENGINE_O) $(NATIVE_BIOS_O) $(NATIVE_DATA_OBJS) $(KINDLE_FRONTEND_O)
 	$(NATIVE_CC) $(NATIVE_CFLAGS) $(NATIVE_LDFLAGS) $(if $(filter macho,$(NATIVE_FORMAT)),-Wl$(comma)-no_fixup_chains) -o $@ $^ -lm
 endif
+
+# Instrumented objects live in their own build directory. The training run
+# is the benchmark itself, which replays real gameplay before each scenario.
+NATIVE_PGO_TRAIN_DIR := $(dir $(NATIVE_PGO_PROFILE))train
+NATIVE_PROFDATA ?= $(if $(filter macho,$(NATIVE_FORMAT)),xcrun llvm-profdata,llvm-profdata)
+
+.PHONY: native-pgo
+native-pgo:
+	rm -rf $(NATIVE_PGO_TRAIN_DIR)/raw
+	$(MAKE) native-bench NATIVE_BUILD_DIR=$(NATIVE_PGO_TRAIN_DIR) NATIVE_PGO_FLAGS=-fprofile-generate=$(NATIVE_PGO_TRAIN_DIR)/raw
+	$(NATIVE_PGO_TRAIN_DIR)/pokeemerald-bench --script tools/wasm_replays/mudkip_starter.txt --golden tools/native/bench_golden.json --passes 1 > /dev/null
+	$(NATIVE_PROFDATA) merge -o $(NATIVE_PGO_PROFILE) $(NATIVE_PGO_TRAIN_DIR)/raw/*.profraw
+	$(MAKE) native-bench
 
 .PHONY: native-test
 native-test: $(NATIVE_BUILD_DIR)/pokeemerald-test
