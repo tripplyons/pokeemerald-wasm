@@ -29,7 +29,7 @@
 #define DISPLAY_WIDTH 240
 #define DISPLAY_HEIGHT 160
 #define DEFAULT_SAVE_PATH "build/native/pokeemerald-kindle.sav"
-#define SAVE_FLUSH_FRAMES 60
+#define SAVE_FLUSH_SECONDS 1.0
 #define DISPLAY_FPS 60
 #define MIN_DISPLAY_FPS 6
 #define MAX_INTERNAL_FRAME_SECONDS (1.0 / MIN_DISPLAY_FPS)
@@ -45,15 +45,18 @@
 #define BUTTON_R      (1u << 8)
 #define BUTTON_L      (1u << 9)
 #define BUTTON_EXIT   (1u << 10)
+#define BUTTON_SPEED  (1u << 11)
+#define FRONTEND_BUTTONS (BUTTON_EXIT | BUTTON_SPEED)
 
 #if defined(__linux__)
 
 #define DEFAULT_FB_PATH "/dev/fb0"
 #define DEFAULT_INPUT_PATH "/dev/input/event1"
 #define DEFAULT_KINDLE_DISPLAY_FPS 4.0
+#define INPUT_POLL_SECONDS 0.025
 #define MAX_INPUT_DEVICES 8
 #define MAX_TOUCHES 8
-#define MAX_UI_BUTTONS 11
+#define MAX_UI_BUTTONS 12
 #define MAX_BATTLE_SHORTCUTS 10
 #define BATTLE_SHORTCUT_MOVE 1
 #define BATTLE_SHORTCUT_PARTY 2
@@ -142,6 +145,8 @@ typedef struct {
 
 typedef struct {
     RectI screen;
+    RectI status;
+    int statusScale;
     KindleButton buttons[MAX_UI_BUTTONS];
     size_t buttonCount;
 } KindleLayout;
@@ -453,7 +458,10 @@ static KindleLayout make_layout(int width, int height)
     if (controlsHeight < 360)
         controlsHeight = 360;
 
-    int maxScreenHeight = height - controlsHeight - exitY - exitHeight - margin;
+    layout.statusScale = exitHeight >= 70 ? 3 : 2;
+    int statusHeight = 7 * layout.statusScale + margin / 3;
+
+    int maxScreenHeight = height - controlsHeight - exitY - exitHeight - statusHeight - margin;
     if (maxScreenHeight < DISPLAY_HEIGHT)
         maxScreenHeight = height - margin * 2;
 
@@ -470,12 +478,19 @@ static KindleLayout make_layout(int width, int height)
     layout.screen.x = (width - layout.screen.width) / 2;
     layout.screen.y = exitY + exitHeight;
 
+    layout.status = (RectI){0, layout.screen.y + layout.screen.height, width, statusHeight};
+
     add_button(&layout, "EXIT", (RectI){(width - exitWidth) / 2, exitY, exitWidth, exitHeight}, BUTTON_EXIT);
+
+    int speedWidth = (width - exitWidth) / 2 - margin * 3 / 2;
+    if (speedWidth > exitWidth)
+        speedWidth = exitWidth;
+    add_button(&layout, "MAX SPEED", (RectI){width - margin - speedWidth, exitY, speedWidth, exitHeight}, BUTTON_SPEED);
 
     int lrGap = margin / 2;
     int lrHeight = exitHeight;
     int lrWidth = (layout.screen.width - lrGap) / 2;
-    int lrY = layout.screen.y + layout.screen.height + margin / 3;
+    int lrY = layout.status.y + layout.status.height;
     add_button(&layout, "L", (RectI){layout.screen.x, lrY, lrWidth, lrHeight}, BUTTON_L);
     add_button(&layout, "R", (RectI){layout.screen.x + lrWidth + lrGap, lrY, lrWidth, lrHeight}, BUTTON_R);
 
@@ -553,7 +568,7 @@ static BattleShortcutLayout make_battle_shortcuts(NativeEngine *engine, const Ki
     layout.back = (RectI){backX, exitButton.y, backWidth, exitButton.height};
     layout.pressedIndex = -1;
 
-    int controlsTop = base->screen.y + base->screen.height + margin / 3;
+    int controlsTop = base->status.y + base->status.height;
     int controlsBottom = height - margin / 2;
     int totalRows = (int)((count + columns - 1) / columns);
     int buttonHeight = totalRows ? (controlsBottom - controlsTop - (totalRows - 1) * gap) / totalRows : 0;
@@ -612,7 +627,7 @@ static uint32_t touch_buttons(const KindleLayout *layout, int x, int y, bool dow
 
     uint32_t held = 0;
     for (size_t i = 0; i < layout->buttonCount; i++) {
-        if (shortcutsVisible && layout->buttons[i].mask != BUTTON_EXIT)
+        if (shortcutsVisible && !(layout->buttons[i].mask & FRONTEND_BUTTONS))
             continue;
         if (contains(layout->buttons[i].rect, x, y))
             held |= layout->buttons[i].mask;
@@ -653,10 +668,19 @@ static void draw_game(Framebuffer *fb, const KindleLayout *layout, const uint8_t
     }
 }
 
-static void draw_ui(Framebuffer *fb, const KindleLayout *layout, const BattleShortcutLayout *shortcuts, uint32_t held)
+static void draw_ui(Framebuffer *fb, const KindleLayout *layout, const BattleShortcutLayout *shortcuts, uint32_t held, int internalFps, int displayFps)
 {
+    char fpsText[64];
+    snprintf(fpsText, sizeof(fpsText), "INTERNAL FPS %d   DISPLAY FPS %d", internalFps, displayFps);
+    draw_text(fb,
+              fpsText,
+              layout->status.x + (layout->status.width - text_width(fpsText, layout->statusScale)) / 2,
+              layout->status.y + (layout->status.height - 7 * layout->statusScale) / 2,
+              layout->statusScale,
+              16);
+
     for (size_t i = 0; i < layout->buttonCount; i++) {
-        if (shortcuts->count != 0 && layout->buttons[i].mask != BUTTON_EXIT)
+        if (shortcuts->count != 0 && !(layout->buttons[i].mask & FRONTEND_BUTTONS))
             continue;
         draw_button(fb, &layout->buttons[i], held);
     }
@@ -870,6 +894,14 @@ int main(int argc, char **argv)
     double frameAccumulator = 0.0;
     double displayInterval = 1.0 / displayFps;
     double nextDisplay = lastFrameTime;
+    double lastFpsTime = lastFrameTime;
+    double lastSaveCheck = lastFrameTime;
+    int internalFramesThisSecond = 0;
+    int displayFramesThisSecond = 0;
+    int internalFps = 0;
+    int measuredDisplayFps = 0;
+    bool unbounded = false;
+    bool speedWasHeld = false;
     uint32_t frame = 0;
 
     while (!gQuit) {
@@ -904,38 +936,67 @@ int main(int argc, char **argv)
         previousShortcut = shortcutPressed;
         if (held & BUTTON_EXIT)
             gQuit = 1;
+        bool speedHeld = (held & BUTTON_SPEED) != 0;
+        if (speedHeld && !speedWasHeld)
+            unbounded = !unbounded;
+        speedWasHeld = speedHeld;
         native_engine_set_keys(engine, held);
 
-        int framesToRun = (int)frameAccumulator;
-        if (framesToRun > 8)
-            framesToRun = 8;
-        if (frameLimit > 0 && frame + (uint32_t)framesToRun > (uint32_t)frameLimit)
-            framesToRun = (int)((uint32_t)frameLimit - frame);
-        frameAccumulator -= framesToRun;
+        uint32_t framesBefore = frame;
+        if (unbounded) {
+            // Run flat out, but return often enough to poll input and refresh the display.
+            double sliceEnd = now + INPUT_POLL_SECONDS;
+            do {
+                native_engine_run_frame(engine);
+                frame++;
+            } while ((frameLimit == 0 || frame < (uint32_t)frameLimit) && monotonic_seconds() < sliceEnd);
+            frameAccumulator = 0.0;
+        } else {
+            int framesToRun = (int)frameAccumulator;
+            if (framesToRun > 8)
+                framesToRun = 8;
+            if (frameLimit > 0 && frame + (uint32_t)framesToRun > (uint32_t)frameLimit)
+                framesToRun = (int)((uint32_t)frameLimit - frame);
+            frameAccumulator -= framesToRun;
 
-        for (int i = 0; i < framesToRun; i++) {
-            native_engine_run_frame(engine);
-            frame++;
+            for (int i = 0; i < framesToRun; i++) {
+                native_engine_run_frame(engine);
+                frame++;
+            }
         }
+        internalFramesThisSecond += (int)(frame - framesBefore);
 
         now = monotonic_seconds();
+        double fpsElapsed = now - lastFpsTime;
+        if (fpsElapsed >= 1.0) {
+            internalFps = (int)round(internalFramesThisSecond / fpsElapsed);
+            measuredDisplayFps = (int)round(displayFramesThisSecond / fpsElapsed);
+            internalFramesThisSecond = 0;
+            displayFramesThisSecond = 0;
+            lastFpsTime = now;
+        }
+
         if (now >= nextDisplay || frameLimit > 0) {
             native_engine_render(engine);
             const uint8_t *display = native_engine_display_buffer(engine);
             draw_game(&fb, &layout, display);
-            draw_ui(&fb, &layout, &shortcuts, held);
+            draw_ui(&fb, &layout, &shortcuts, held | (unbounded ? BUTTON_SPEED : 0), internalFps, measuredDisplayFps);
             refresh_framebuffer(&fb, (RectI){0, 0, fb.width, fb.height}, false);
+            displayFramesThisSecond++;
             nextDisplay = now + displayInterval;
         }
 
-        if (framesToRun > 0 && frame % SAVE_FLUSH_FRAMES == 0)
+        // Checked on wall time: a per-frame cadence would hash flash constantly at unbounded speed.
+        if (now - lastSaveCheck >= SAVE_FLUSH_SECONDS) {
             lastSaveHash = native_engine_save_flash_if_changed(engine, savePath, lastSaveHash, false);
+            lastSaveCheck = now;
+        }
         if (frameLimit > 0 && frame >= (uint32_t)frameLimit)
             break;
 
         double sleepFor = nextDisplay - monotonic_seconds();
-        if (sleepFor > 0.002)
-            sleep_seconds(sleepFor < 0.025 ? sleepFor : 0.025);
+        if (!unbounded && sleepFor > 0.002)
+            sleep_seconds(sleepFor < INPUT_POLL_SECONDS ? sleepFor : INPUT_POLL_SECONDS);
     }
 
     lastSaveHash = native_engine_save_flash_if_changed(engine, savePath, lastSaveHash, true);
