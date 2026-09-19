@@ -177,3 +177,89 @@ Raw results, disassembly, and traces are in the ignored `build/native/perf/`
 directory. `ablation-*.json` records the candidate comparison and
 `final-*.json` records the final rebuild comparison. The production benchmark
 and goldens are unchanged.
+
+## Larger uncapped simulation opportunities
+
+The baseline is `64ec2a746`, including the pointer-sized OAM index. These
+measurements use the same M3 Max and Apple clang 21. Each variant ran three
+times with eight passes per run, reversing variant order in the middle round.
+The table reports medians. Timing runs were sequential, without compilation,
+sampling, or replay checks running alongside them.
+
+| Scenario | Baseline frames/s | PGO frames/s | Change | OAM deferral prototype frames/s | Change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Overworld | 4,783,482 | 5,428,552 | +13.5% | 5,862,163 | +22.6% |
+| Menu | 12,121,763 | 13,142,371 | +8.4% | 18,108,492 | +49.4% |
+| Battle | 6,047,018 | 6,765,291 | +11.9% | 7,892,442 | +30.5% |
+| Aggregate score | 7,650,754 | 8,441,377 | +10.3% | 10,621,033 | +38.8% |
+
+### Profile-guided compilation
+
+The existing `native-pgo` target provides the immediate opportunity. An
+isolated build trained on one benchmark pass and used the resulting profile
+for the optimized build:
+
+```sh
+make -j8 native-pgo \
+  NATIVE_BUILD_DIR=build/native/perf/opportunities/pgo-engine \
+  NATIVE_PGO_PROFILE=build/native/perf/opportunities/pgo/native.profdata
+```
+
+All six unchanged goldens, determinism checks, and sprite-sort checks passed.
+All 27,229 per-frame replay display hashes also matched the baseline. Build
+warnings were the existing unaligned data relocation and constant-array
+extension warnings; there were no other warnings.
+
+Training and measurement use the same scenarios, so the 10.3% gain does not
+establish performance across the whole game. No default build flags or
+profile location changed. `make native-pgo` without those overrides trains
+and enables PGO for subsequent desktop builds through the existing workflow.
+
+### Defer final OAM preparation between displayed frames
+
+An isolated diagnostic skipped `AddSpritesToOamBuffer`,
+`CopyMatricesToOamBuffer`, and `LoadOam` for the first 1,000,002 measured
+frames, then executed them normally on the final measured frame. It retained
+sprite coordinate updates, sorting, animation, callbacks, sprite copy request
+processing, palette uploads, and the rest of VBlank. The six benchmark
+goldens and determinism checks still passed.
+
+The 38.8% gain is evidence of potential savings, not a correct optimization.
+A second diagnostic deferred OAM throughout the input replay and compared
+each displayed frame against the normal trace:
+
+| Render interval | Frames checked | Display hash mismatches |
+| --- | ---: | ---: |
+| Every 2 frames | 13,615 | 0 |
+| Every 16 frames | 1,703 | 7 |
+| Every 256 frames | 108 | 1 |
+
+At interval 16, frames 26,368 through 26,464, spaced 16 apart, differed during
+the starter-selection transition. Interval 256 differed at frame 26,368.
+This prototype is not enabled in production. A correct design must preserve
+the timing and contents of prepared and loaded OAM across callback changes,
+direct OAM writes, and frames where ordinary preparation or loading stops.
+Rebuilding only on a displayed frame is insufficient.
+
+Broader skipping also has explicit dependencies: field effects read
+`sprite->oam.x/y`, `ReadPlttIntoBuffers` reads palette RAM back into game
+buffers, and VBlank advances RNG and timers. Those operations cannot simply
+be removed when a frame is not displayed.
+
+### Batch frontend clock checks
+
+A separate diagnostic kept the engine unchanged and checked
+`CLOCK_MONOTONIC` after each batch of simulation calls. Median aggregate
+scores were 7,062,731 frames/s for batches of 1, 7,556,594 for 16, and
+7,661,826 for 256. Moving from 1 to 16 recovered 7.0%; moving from 16 to
+256 added 1.4%. All benchmark correctness gates passed.
+
+The Kindle max-speed loop currently checks the clock after every frame.
+Raylib already checks every 16 frames. These Mac measurements justify a
+Kindle experiment but do not establish a gain or acceptable input latency on
+Kindle hardware. They do not improve the existing headless benchmark, which
+already times the whole fixed batch without per-frame clock checks.
+
+Raw results, isolated diagnostic sources and binaries, profile data, and
+replay comparisons are under the ignored `build/native/perf/opportunities/`
+directory. The production engine and benchmark remain unchanged.
