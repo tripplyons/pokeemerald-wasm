@@ -57,8 +57,19 @@ $(NATIVE_BUILD_DIR)/data/%.o: data/%.s tools/native/generate_data.py tools/wasm_
 # Keep assembly aliases and untyped symbol-address relocations outside LTO.
 	$(NATIVE_CC) $(NATIVE_CFLAGS) -fno-lto -c $@.c -o $@
 
+# LTO cannot link bitcode from two compilers. NATIVE_CC defaults to the first
+# clang in PATH, which differs between shells, so the stamp changes with the
+# compiler and every native object is rebuilt.
+NATIVE_CC_STAMP := $(NATIVE_BUILD_DIR)/compiler.stamp
+NATIVE_CC_ID := $(shell $(NATIVE_CC) --version 2>&1 | head -n 1)
+
+.PHONY: native-cc-id
+$(NATIVE_CC_STAMP): native-cc-id
+	@mkdir -p $(dir $@)
+	@printf '%s\n' '$(NATIVE_CC_ID)' | cmp -s - $@ || printf '%s\n' '$(NATIVE_CC_ID)' > $@
+
 $(NATIVE_C_OBJS): tools/native/prepare_source.py
-$(NATIVE_C_OBJS) $(NATIVE_DATA_OBJS) $(NATIVE_ENGINE_O) $(NATIVE_BIOS_O) $(NATIVE_RAYLIB_MAIN_O) $(NATIVE_BENCH_O) $(KINDLE_FRONTEND_O): tools/native/build.mk tools/native/performance.mk Makefile
+$(NATIVE_C_OBJS) $(NATIVE_DATA_OBJS) $(NATIVE_ENGINE_O) $(NATIVE_BIOS_O) $(NATIVE_RAYLIB_MAIN_O) $(NATIVE_BENCH_O) $(KINDLE_FRONTEND_O): tools/native/build.mk tools/native/performance.mk Makefile $(NATIVE_CC_STAMP)
 ifneq (,$(findstring -fprofile-use=$(NATIVE_PGO_PROFILE),$(NATIVE_CFLAGS)))
 $(NATIVE_C_OBJS) $(NATIVE_DATA_OBJS) $(NATIVE_ENGINE_O) $(NATIVE_BIOS_O) $(NATIVE_RAYLIB_MAIN_O) $(NATIVE_BENCH_O): $(NATIVE_PGO_PROFILE)
 endif
@@ -91,6 +102,7 @@ native-test: $(NATIVE_BUILD_DIR)/pokeemerald-test
 	python3 tools/native/test_prepare_source.py
 	$(NATIVE_BUILD_DIR)/pokeemerald-test
 
+$(NATIVE_OBJ_DIR)/native_test_game.o $(NATIVE_BUILD_DIR)/test_main.o: $(NATIVE_CC_STAMP)
 $(NATIVE_OBJ_DIR)/native_test_game.o: tools/native/prepare_source.py tools/native/build.mk Makefile | generated wasm-assets
 -include $(NATIVE_OBJ_DIR)/native_test_game.o.d
 
