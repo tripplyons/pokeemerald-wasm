@@ -18,8 +18,15 @@ class NativeSourceTest(unittest.TestCase):
 typedef unsigned int u32;
 struct Packed { char tag; void *pointer; } __attribute__((packed));
 struct Node { int value; struct Node *next; };
+struct Aligned { char prefix[84]; unsigned char bytes[1024] __attribute__((aligned(16))); };
+struct Aligned32 { char tag; unsigned char bytes[32] __attribute__((aligned(32))); };
+struct AfterAligned { char tag; void *pointer; };
 _Static_assert(sizeof(struct Packed) == 1 + sizeof(void *), "packed layout");
 _Static_assert(_Alignof(struct Packed) == 1, "packed alignment");
+_Static_assert(__builtin_offsetof(struct Aligned, bytes) == 96, "aligned field offset");
+_Static_assert(_Alignof(struct Aligned) == 16, "aligned record");
+_Static_assert(__builtin_offsetof(struct Aligned32, bytes) == 32, "alignment beyond pragma pack limits");
+_Static_assert(__builtin_offsetof(struct AfterAligned, pointer) == 4, "packing restored");
 char *zero = (char *)0;
 char *address = (char *)4;
 int main(void)

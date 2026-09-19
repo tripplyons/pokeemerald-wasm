@@ -1,7 +1,11 @@
 #include "global.h"
+#include "main.h"
 #include "native_save.h"
 #include "new_game.h"
 #include "save.h"
+
+STATIC_ASSERT(__alignof__(struct Main) >= 16, NativeMainAlignment)
+STATIC_ASSERT(__builtin_offsetof(struct Main, oamBuffer) % 16 == 0, NativeOamAlignment)
 
 int NativeTestSave(void)
 {

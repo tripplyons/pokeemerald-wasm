@@ -415,3 +415,60 @@ Sources, raw measurements, profiles, and logs are in the ignored
 `production-summary.json`, `final-artifacts.json`, `final-buildoam.s`,
 `final-trace.txt`, `final-targets.log`, and `final-kindle.log`. The default
 profile at `build/native/pgo/native.profdata` is freshly trained for this code.
+
+## Native OAM buffer alignment
+
+The native OAM buffer now starts on a 16-byte boundary. It previously
+started 84 bytes into `struct Main` on 64-bit native builds, four bytes off
+that boundary. The native source converter normally caps record packing at
+four bytes; it now removes that cap for unpacked records with explicitly
+over-aligned fields. Packed records retain their previous handling, and the
+packing limit is restored after each record. The browser and GBA definitions
+are unchanged.
+
+The final comparison used the production binary after fresh `make native-pgo`
+training against the preserved `72d808415` binary and its previous profile.
+Both use Apple clang 21.0.0, `-O3 -flto`, and PGO on the same M3 Max. These
+are medians of eight alternating eight-pass runs per binary with the unchanged
+replay, warmup, measurement count, and framebuffer goldens. Compilation and
+other validation finished before timing.
+
+| Scenario | Previous frames/s | Aligned frames/s | Change |
+| --- | ---: | ---: | ---: |
+| Overworld | 5,517,381 | 5,633,115 | +2.1% |
+| Menu | 13,697,445 | 13,976,209 | +2.0% |
+| Battle | 6,868,516 | 6,777,170 | -1.3% |
+| Aggregate score | 8,698,675 | 8,795,223 | +1.1% |
+
+The candidate scored higher in all eight paired runs. The mean paired score
+change was +1.29%; a paired bootstrap interval was +0.84% to +1.80% at 95%.
+This improves the aggregate throughput target, with a 1.3% battle regression.
+It does not establish a whole-game, displayed-FPS, browser, or Kindle gain.
+
+This round also tested native CPU tuning, `-O2`, idle and sparse text-printer
+masks, and two shared fixed-size copy routines for palette and OAM transfers.
+The compiler changes did not establish a gain. After PGO retraining, the
+sparse text mask improved battle throughput but did not establish an aggregate
+gain. Testing alignment with and without that mask favored alignment alone.
+The fixed-size copy routines lost approximately 3% and 8% in screening.
+These experiments remain outside production code.
+
+All six unchanged goldens and the determinism, progression, and sprite-sort
+checks pass. All 27,229 replay display hashes match the previous build.
+`make native-pgo`, `make native-bench native-test native-raylib`, and
+`make native-kindle` pass. The source-converter tests cover 16-byte and 32-byte
+field alignment, packed records, and restoration of four-byte packing. Native
+game tests assert the actual Main and OAM alignments; a target-Clang check also
+confirms the Kindle layout. Non-native preprocessing of the changed header
+matches the previous version with both `WASM=0` and `WASM=1`.
+
+The final converter adjustment produces a byte-identical desktop benchmark
+to the PGO-trained, replay-verified build. The engine build has no profile
+mismatch warnings. Existing data relocation warnings remain.
+
+Sources, rejected prototypes, raw measurements, profiles, and logs are in
+`build/native/perf/cpu-next/` (ignored). Final evidence includes
+`baseline-verified-*.json`, `final-verified-*.json`, `verified-summary.json`,
+`final-artifacts.json`, `final-trace.txt`, `final-targets.log`,
+`final-kindle.log`, and `final-pgo.log`. The default profile at
+`build/native/pgo/native.profdata` is freshly trained for this engine layout.

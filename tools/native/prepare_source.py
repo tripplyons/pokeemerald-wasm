@@ -19,23 +19,35 @@ def parse(text):
                            '-Xclang', '-ast-dump=json', source], capture_output=True)
 
 
-def packed_records(node):
-    if node.get('kind') == 'RecordDecl' and any(
-            child.get('kind') == 'PackedAttr' for child in node.get('inner', [])):
-        bounds = node['range']
-        yield bounds['begin']['offset'], bounds['end']['offset'] + bounds['end']['tokLen']
+def record_packing(node):
+    if node.get('kind') == 'RecordDecl':
+        children = node.get('inner', [])
+        packed = any(child.get('kind') == 'PackedAttr' for child in children)
+        alignment = 1 if packed else 4
+        for field in children:
+            if not packed and field.get('kind') == 'FieldDecl':
+                for attr in field.get('inner', []):
+                    if attr.get('kind') == 'AlignedAttr':
+                        for value in attr.get('inner', []):
+                            if value.get('kind') == 'ConstantExpr':
+                                alignment = max(alignment, int(value['value']))
+        if alignment != 4:
+            bounds = node['range']
+            packing = 0 if alignment > 4 else alignment
+            yield bounds['begin']['offset'], bounds['end']['offset'] + bounds['end']['tokLen'], packing
     for child in node.get('inner', []):
-        yield from packed_records(child)
+        yield from record_packing(child)
 
 
 result = parse(text)
 # Clang's pack(4) raises the alignment of packed records to four. Preserve
 # their original byte alignment, including packed records nested in structs.
+# Otherwise, over-aligned fields opt their record out of the four-byte cap.
 packing = []
-for start, end in packed_records(json.loads(result.stdout)):
+for start, end, alignment in record_packing(json.loads(result.stdout)):
     # Include trailing attributes and declarators before restoring alignment.
     end = text.index(';', end) + 1
-    packing.extend([(start, '\n#pragma pack(push, 1)\n'),
+    packing.extend([(start, f'\n#pragma pack(push, {alignment})\n'),
                     (end, '\n#pragma pack(pop)\n')])
 for offset, insertion in sorted(set(packing), reverse=True):
     text = text[:offset] + insertion + text[offset:]

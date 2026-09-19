@@ -31,7 +31,11 @@ struct Main
     /*0x034*/ bool16 watchedKeysPressed; // whether one of the watched keys was pressed
     /*0x036*/ u16 watchedKeysMask;       // bit mask for watched keys
 
+#ifdef NATIVE
+    struct OamData oamBuffer[128] ALIGNED(16);
+#else
     /*0x038*/ struct OamData oamBuffer[128];
+#endif
 
     /*0x438*/ u8 state;
 
