@@ -125,9 +125,16 @@ static void bg_affine_set(uintptr_t src, uintptr_t dst, uint32_t count)
         int16_t xScale = read_s16(s + 12);
         int16_t yScale = read_s16(s + 14);
         uint16_t rotation = read_u16(s + 16);
-        double angle = rotation * M_PI * 2.0 / 0x10000;
-        double sn = sin(angle) * 256.0;
-        double cs = cos(angle) * 256.0;
+        // Keep the host math result for repeated angles, including all 16 bits.
+        static uint32_t previous = 0x10000;
+        static double cached_sn, cached_cs;
+        if (previous != rotation) {
+            double angle = rotation * M_PI * 2.0 / 0x10000;
+            cached_sn = sin(angle) * 256.0;
+            cached_cs = cos(angle) * 256.0;
+            previous = rotation;
+        }
+        double sn = cached_sn, cs = cached_cs;
         int32_t a = (int32_t)(cs * xScale / 256.0);
         int32_t b = (int32_t)(-sn * xScale / 256.0);
         int32_t c = (int32_t)(sn * yScale / 256.0);
@@ -149,9 +156,16 @@ static void obj_affine_set(uintptr_t src, uintptr_t dst, uint32_t count, uint32_
         int16_t xScale = read_s16(s);
         int16_t yScale = read_s16(s + 2);
         uint16_t rotation = read_u16(s + 4);
-        double angle = rotation * M_PI * 2.0 / 0x10000;
-        double sn = sin(angle) * 256.0;
-        double cs = cos(angle) * 256.0;
+        // Keep the host math result for repeated angles, including all 16 bits.
+        static uint32_t previous = 0x10000;
+        static double cached_sn, cached_cs;
+        if (previous != rotation) {
+            double angle = rotation * M_PI * 2.0 / 0x10000;
+            cached_sn = sin(angle) * 256.0;
+            cached_cs = cos(angle) * 256.0;
+            previous = rotation;
+        }
+        double sn = cached_sn, cs = cached_cs;
         write_s16(d, (int32_t)(cs * xScale / 256.0));
         write_s16(d + offset, (int32_t)(-sn * xScale / 256.0));
         write_s16(d + offset * 2, (int32_t)(sn * yScale / 256.0));

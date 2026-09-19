@@ -472,3 +472,58 @@ Sources, rejected prototypes, raw measurements, profiles, and logs are in
 `final-artifacts.json`, `final-trace.txt`, `final-targets.log`,
 `final-kindle.log`, and `final-pgo.log`. The default profile at
 `build/native/pgo/native.profdata` is freshly trained for this engine layout.
+
+## Repeated native affine angles
+
+The baseline is `05907f2d9`, with its existing PGO profile. This round changes
+only native affine math, leaving OAM packing and transfers untouched. A fresh
+sample found 45 calls into host trigonometry below `ContinueAffineAnim` among
+3,149 main-thread samples, alongside 105 samples in the affine function itself.
+Sampling includes startup and rendering and is separate from timing.
+
+Both native affine helpers now retain the sine and cosine of their last angle.
+Scale multiplication, integer conversion, destination writes, and background
+translation still run on every call. The cache keys on the full 16-bit angle;
+it does not quantize angles or reuse rounded matrix coefficients. An
+out-of-range initial key forces the first calculation. These cached math
+results are independent of engine state and remain valid across engine resets.
+
+The candidate was rebuilt with a freshly trained `make native-pgo` profile.
+Eight alternating runs per binary used eight passes each, with no compilation,
+profiling, or other verification running alongside the measurements. The table
+reports medians on the same M3 Max and Apple clang 21 used above.
+
+| Scenario | Baseline frames/s | Cached angles frames/s | Change |
+| --- | ---: | ---: | ---: |
+| Overworld | 5,615,841 | 6,420,778 | +14.3% |
+| Menu | 14,037,377 | 14,043,839 | +0.0% |
+| Battle | 6,781,942 | 6,894,838 | +1.7% |
+| Aggregate score | 8,809,443 | 9,121,967 | +3.5% |
+
+All eight paired aggregate comparisons improved. The paired mean gain was
+3.68%, with a paired bootstrap 95% interval of 3.31% to 4.08%. These results
+measure the benchmark's three scenarios, not performance throughout the game.
+
+Other experiments screened in this round:
+
+- A 256-entry angle cache improved aggregate throughput by 2.8%, versus 4.4%
+  for the last-angle cache in the same initial screen. The smaller cache won.
+- Comparing palette memory before copying it reduced throughput by 8.1%.
+- Caching the link-status calculation produced effectively no change.
+
+Those alternatives were removed. Each screen used three alternating runs of
+eight passes per binary; the final table above uses the fresh PGO build.
+
+All 128 final benchmark passes had positive scores and passed the unchanged
+six goldens, determinism, progress, and sprite-sort checks. All 27,229 final
+render-trace hashes match the baseline. Native tests check every 16-bit angle
+with 14 pairs of scale values, repeated calls with changing scales, unaligned
+buffers, two output strides, multiple sprite records, and background
+translation. The same numeric reference checks pass against the original
+implementation and pass AddressSanitizer/UndefinedBehaviorSanitizer with the
+cache. Native tests, desktop frontend, and Kindle builds pass. Kindle speed
+was not measured; browser and GBA code are unchanged.
+
+Raw measurements, profiles, binaries, checks, and source hashes are in the
+ignored `build/native/perf/non-oam/` directory. `verified-summary.json` contains
+the final comparison; `artifacts.json` identifies its binaries and inputs.
