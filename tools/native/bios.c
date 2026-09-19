@@ -49,8 +49,14 @@ static void write_s16(uintptr_t addr, int32_t value)
 
 static void copy_units(uintptr_t src, uintptr_t dst, uint32_t count, uint32_t size, bool fill)
 {
+    if (!count) return;
+    size_t bytes = (size_t)count * size;
+    if (!fill && src - dst >= bytes && dst - src >= bytes) {
+        memcpy((void *)dst, (const void *)src, bytes);
+        return;
+    }
 
-
+    // Overlapping copies advance one unit at a time, as the GBA BIOS does.
     for (uint32_t i = 0; i < count; i++) {
         uintptr_t from = fill ? src : src + i * size;
         memmove((uint8_t *)dst + i * size, (uint8_t *)from, size);
