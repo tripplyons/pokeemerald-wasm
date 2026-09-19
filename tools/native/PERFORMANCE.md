@@ -527,3 +527,40 @@ was not measured; browser and GBA code are unchanged.
 Raw measurements, profiles, binaries, checks, and source hashes are in the
 ignored `build/native/perf/non-oam/` directory. `verified-summary.json` contains
 the final comparison; `artifacts.json` identifies its binaries and inputs.
+
+## Further non-OAM experiments
+
+The baseline is `61cbb3bfb`, with the repeated-angle cache and its existing
+PGO profile. Five more approaches were tested on the same M3 Max and Apple
+clang 21. None established a repeatable aggregate throughput improvement,
+so none remains in production code.
+
+| Experiment | Initial aggregate change | Follow-up |
+| --- | ---: | --- |
+| Keep `LinkMain1` out of line | +0.14% | No useful screening gain |
+| Keep GPU-register synchronization out of line | +0.00% | No screening gain |
+| Remove volatile accesses in generated native main, GPU-register, and link code | +0.85% | -0.24% in a second screen |
+| Remove reciprocal power-of-two scaling from affine math | +1.39% | +0.88% on repeat, then -0.35% after fresh PGO |
+| Compute four affine coefficients with vector operations | +0.62% | +0.08% after fresh PGO, with mixed paired results |
+
+Initial screens used three alternating runs per binary, except the vector
+screen, which used four. The second screen used four. Each invocation ran
+eight benchmark passes. Both affine candidates received fresh PGO training
+and eight alternating final runs per binary against the saved baseline.
+Compilation, profiling, and other verification were kept outside timing runs.
+Every measured invocation passed the unchanged goldens, determinism,
+progression, and sprite-sort checks.
+
+Both affine candidates passed the exhaustive angle and scale reference checks
+under AddressSanitizer and UndefinedBehaviorSanitizer. The scalar candidate
+also passed native tests, desktop and Kindle builds, and all 27,229 render-trace
+hashes before its final timing rejected it. Correctness alone did not justify
+keeping either change.
+
+The original source and PGO profile were restored. The rebuilt benchmark is
+byte-identical to the saved baseline; native tests, desktop, and Kindle builds
+pass. Raw measurements, prototypes, profiles, binaries, and logs remain in the ignored
+`build/native/perf/non-oam-next/` directory. `experiment-summary.json` records
+the comparisons; `experiment-artifacts.json` identifies the saved builds.
+The files named `final` in that directory are the rejected scalar candidate,
+not the retained engine.
