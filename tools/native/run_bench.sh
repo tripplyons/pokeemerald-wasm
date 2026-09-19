@@ -45,7 +45,7 @@ MAKE_ARGS=()
 for target in ${NATIVE_MAKE_OLD_FILES:-}; do
   MAKE_ARGS+=("-o" "$target")
 done
-if ! make "${MAKE_ARGS[@]}" NATIVE_CC="$NATIVE_CC" native-bench >"$BUILD_LOG" 2>&1; then
+if ! make ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} NATIVE_CC="$NATIVE_CC" native-bench >"$BUILD_LOG" 2>&1; then
   python3 - "$BUILD_LOG" <<'PYEOF'
 import json, sys
 with open(sys.argv[1], errors="replace") as f:
