@@ -1,6 +1,6 @@
 # Native performance measurements
 
-Measured on an Apple M3 Max, macOS 26.6.2, with Apple clang and the default
+Measured on an Apple M3 Max, macOS 26.6.2, with Apple clang 21.0.0 and the default
 `-O3 -flto` native flags. No PGO profile was present. These are headless
 simulation results, not displayed game FPS.
 
@@ -47,3 +47,30 @@ build/native/pokeemerald-bench --script tools/wasm_replays/mudkip_starter.txt --
 Local raw results and the sampling report are in the ignored
 `build/native/perf/` directory. Results do not establish Kindle, browser,
 GUI, or PGO performance.
+
+## Follow-up checks and remaining bottlenecks
+
+A second round of three alternating eight-pass runs reproduced the OAM gain:
+median aggregate scores were 7,037,959 before and 7,412,842 after (+5.3%).
+A zero-rotation `ObjAffineSet` shortcut passed exhaustive angle/scale checks
+but scored 7,408,476 in the same round, effectively unchanged from OAM alone.
+It was removed. Both OAM and the experimental affine path also passed a
+standalone AddressSanitizer/UndefinedBehaviorSanitizer run of the BIOS checks.
+
+Remaining candidates from the baseline profile, in priority order:
+
+- `UpdateOamCoords`: 469 samples. Position and sort-key calculations run for
+  active sprites every frame. Any caching must account for direct writes to
+  sprite fields and global camera offsets.
+- Palette and OAM transfers: 476 samples in memory copies, including 221 below
+  `TransferPlttBuffer`. Skipping unchanged data needs reliable invalidation;
+  adding a comparison can cost as much as these small copies.
+- Sprite animation: 223 samples in `AnimateSprites`, plus its callbacks and
+  affine helpers. Dummy callbacks and repeated affine work are candidates,
+  but the zero-rotation experiment did not improve aggregate throughput.
+- Software rendering: roughly 90 microseconds per rendered frame, hundreds
+  of times the cost of a simulation frame. This matters for a frontend that
+  renders every frame, although it does not contribute to the engine score.
+
+These are measured hotspots or follow-up hypotheses, not claims that the
+remaining work can safely be skipped.
