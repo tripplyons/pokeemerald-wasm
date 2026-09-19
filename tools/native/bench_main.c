@@ -11,6 +11,10 @@
 // passes. This keeps the performance loop observable and catches state
 // or rendering regressions without charging GUI/software-renderer work
 // to the engine FPS score.
+//
+// The software renderer is timed separately: after the end checkpoint,
+// each scenario renders its final state RENDER_FRAMES times. That cost is
+// reported as info only and never feeds the score.
 #include "native_engine.h"
 
 #include <math.h>
@@ -26,6 +30,7 @@
 #define WARMUP_FRAMES 10007u
 #define MEASURE_FRAMES 1000003u
 #define MIN_MEASURE_SECONDS 0.01
+#define RENDER_FRAMES 256u
 
 typedef struct {
     uint32_t frame;
@@ -48,6 +53,7 @@ static const size_t kScenarioCount = sizeof(kScenarios) / sizeof(kScenarios[0]);
 typedef struct {
     double fps[sizeof(kScenarios) / sizeof(kScenarios[0])];
     double seconds[sizeof(kScenarios) / sizeof(kScenarios[0])];
+    double renderSeconds[sizeof(kScenarios) / sizeof(kScenarios[0])];
     uint64_t startHash[sizeof(kScenarios) / sizeof(kScenarios[0])];
     uint64_t endHash[sizeof(kScenarios) / sizeof(kScenarios[0])];
     bool valid;
@@ -170,8 +176,8 @@ static NativeEngine *replay_to(const ButtonEvent *events, uint32_t eventCount, u
 
 static void run_scenario(const ButtonEvent *events, uint32_t eventCount,
                          const Scenario *scenario, double *secondsOut,
-                         double *fpsOut, uint64_t *startHashOut,
-                         uint64_t *endHashOut)
+                         double *fpsOut, double *renderSecondsOut,
+                         uint64_t *startHashOut, uint64_t *endHashOut)
 {
     NativeEngine *engine = replay_to(events, eventCount, scenario->replayFrame);
 
@@ -190,6 +196,11 @@ static void run_scenario(const ButtonEvent *events, uint32_t eventCount,
     // emulated screen state, while remaining outside the timed region.
     native_engine_render(engine);
     *endHashOut = native_engine_hash_display(engine);
+
+    double renderStart = now_seconds();
+    for (uint32_t frame = 0; frame < RENDER_FRAMES; frame++)
+        native_engine_render(engine);
+    *renderSecondsOut = now_seconds() - renderStart;
 
     *secondsOut = end - start;
     *fpsOut = *secondsOut > 0.0 ? (double)MEASURE_FRAMES / *secondsOut : 0.0;
@@ -300,6 +311,7 @@ int main(int argc, char **argv)
         for (size_t s = 0; s < kScenarioCount; s++) {
             run_scenario(events, eventCount, &kScenarios[s],
                          &results[pass].seconds[s], &results[pass].fps[s],
+                         &results[pass].renderSeconds[s],
                          &results[pass].startHash[s], &results[pass].endHash[s]);
             if (!isfinite(results[pass].fps[s])
                 || results[pass].seconds[s] < MIN_MEASURE_SECONDS)
@@ -381,6 +393,14 @@ int main(int argc, char **argv)
     printf("    \"scenario_fps\": {");
     for (size_t s = 0; s < kScenarioCount; s++)
         printf("%s\"%s\": %.2f", s ? ", " : "", kScenarios[s].name, aggregateFps[s]);
+    printf("},\n    \"scenario_render_us\": {");
+    for (size_t s = 0; s < kScenarioCount; s++) {
+        double renderSeconds = 0.0;
+        for (int pass = 0; pass < passes; pass++)
+            renderSeconds += results[pass].renderSeconds[s];
+        printf("%s\"%s\": %.2f", s ? ", " : "", kScenarios[s].name,
+               renderSeconds * 1e6 / ((double)RENDER_FRAMES * passes));
+    }
     printf("},\n    \"passes\": [\n");
     for (int pass = 0; pass < passes; pass++) {
         printf("      {\"valid\": %s, \"scenarios\": {", results[pass].valid ? "true" : "false");
