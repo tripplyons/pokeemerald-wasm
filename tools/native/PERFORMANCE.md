@@ -215,6 +215,15 @@ establish performance across the whole game. No default build flags or
 profile location changed. `make native-pgo` without those overrides trains
 and enables PGO for subsequent desktop builds through the existing workflow.
 
+The verified profile is now installed at the default local path,
+`build/native/pgo/native.profdata`. The normal `native-bench`, `native-test`,
+and `native-raylib` targets were rebuilt with it. Native tests, all six
+goldens, determinism and sprite-sort checks, and all 27,229 replay hashes
+pass. The profile is a generated local artifact; `make clean-native` removes
+it, and `make native-pgo` recreates it. Activation checks are recorded in
+`pgo-enable.log`, `pgo-enabled.json`, and `pgo-enabled-trace.txt` under the
+opportunities directory.
+
 ### Defer final OAM preparation between displayed frames
 
 An isolated diagnostic skipped `AddSpritesToOamBuffer`,
