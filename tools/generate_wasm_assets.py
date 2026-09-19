@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import pathlib
 import re
 import shlex
@@ -35,7 +36,10 @@ def run_gbagfx(input_path, output_path, options=()):
 def ensure_make_target(target):
     if pathlib.Path(target).exists():
         return
-    subprocess.run(['make', 'NODEP=1', 'SETUP_PREREQS=1', target], check=True)
+    # A parent `make -j` advertises its jobserver pipe through MAKEFLAGS, but
+    # Python closes those descriptors. The child must not try to use them.
+    env = {name: value for name, value in os.environ.items() if name not in ('MAKEFLAGS', 'MFLAGS')}
+    subprocess.run(['make', 'NODEP=1', 'SETUP_PREREQS=1', target], check=True, env=env)
 
 
 def generate_incgfx(source, extension, args):
