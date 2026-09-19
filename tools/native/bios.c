@@ -169,22 +169,26 @@ static void copy_oam_matrices(uintptr_t src, uintptr_t dest,
     source = (uint8_t *)src;
     output = (uint8_t *)dest;
     memcpy(&dummy_oam, (uint8_t *)dummy, sizeof(dummy_oam));
-    for (uint32_t i = oam_count; i < oam_limit; i++)
-        memcpy(output + i * 8, &dummy_oam, sizeof(dummy_oam));
-
-    output += 6;
-    for (uint32_t matrix = 0; matrix < 32; matrix++) {
+    uint32_t i = 0;
+    for (; i < oam_count; i++) {
         uint16_t value;
-        memcpy(&value, source, sizeof(value));
-        memcpy(output, &value, sizeof(value));
-        memcpy(&value, source + 2, sizeof(value));
-        memcpy(output + 8, &value, sizeof(value));
-        memcpy(&value, source + 4, sizeof(value));
-        memcpy(output + 16, &value, sizeof(value));
-        memcpy(&value, source + 6, sizeof(value));
-        memcpy(output + 24, &value, sizeof(value));
-        source += 8;
-        output += 32;
+        memcpy(&value, source + i * 2, sizeof(value));
+        memcpy(output + i * 8 + 6, &value, sizeof(value));
+    }
+
+    // Each OAM record holds one matrix component in its last halfword.
+    // Fill unused records and insert that component in the same write.
+    dummy_oam &= UINT64_C(0x0000ffffffffffff);
+    for (; i < oam_limit; i++) {
+        uint16_t value;
+        memcpy(&value, source + i * 2, sizeof(value));
+        uint64_t oam = dummy_oam | ((uint64_t)value << 48);
+        memcpy(output + i * 8, &oam, sizeof(oam));
+    }
+    for (; i < 128; i++) {
+        uint16_t value;
+        memcpy(&value, source + i * 2, sizeof(value));
+        memcpy(output + i * 8 + 6, &value, sizeof(value));
     }
 }
 

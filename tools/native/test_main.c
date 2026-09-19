@@ -10,6 +10,34 @@ extern uint32_t NativePointerToWord(const void *pointer);
 extern void *NativeDecodePointer(unsigned long word);
 extern void CpuSet(uintptr_t src, uintptr_t dst, uint32_t mode);
 extern void CpuFastSet(uintptr_t src, uintptr_t dst, uint32_t mode);
+extern void WasmCopyOamMatrices(uintptr_t src, uintptr_t dst, uintptr_t dummy,
+                                uint32_t count, uint32_t limit);
+
+static int check_oam_matrices(void)
+{
+    unsigned char matrices[257], dummy[9], actual[1026], expected[1026];
+    for (unsigned int i = 0; i < sizeof(matrices); i++)
+        matrices[i] = (unsigned char)(i * 37 + 11);
+    for (unsigned int i = 0; i < sizeof(dummy); i++)
+        dummy[i] = (unsigned char)(i * 19 + 7);
+
+    // Odd addresses exercise the helper's unaligned copies too. Check every
+    // count/limit pair, including records beyond the configured OAM limit.
+    for (unsigned int count = 0; count <= 128; count++) {
+        for (unsigned int limit = 0; limit <= 128; limit++) {
+            for (unsigned int i = 0; i < sizeof(actual); i++)
+                actual[i] = expected[i] = (unsigned char)(i * 13 + count + limit);
+            for (unsigned int i = count; i < limit; i++)
+                memcpy(expected + 1 + i * 8, dummy + 1, 8);
+            for (unsigned int i = 0; i < 128; i++)
+                memcpy(expected + 1 + i * 8 + 6, matrices + 1 + i * 2, 2);
+            WasmCopyOamMatrices((uintptr_t)(matrices + 1), (uintptr_t)(actual + 1),
+                               (uintptr_t)(dummy + 1), count, limit);
+            if (memcmp(actual, expected, sizeof(actual))) return 8;
+        }
+    }
+    return 0;
+}
 
 static int check_cpu_copies(void)
 {
@@ -66,6 +94,7 @@ int main(void)
     native_engine_boot(engine);
     for (int frame = 0; frame < 300; frame++) native_engine_run_frame(engine);
     int result = check_cpu_copies();
+    if (!result) result = check_oam_matrices();
     if (!result) result = check_pointer_arithmetic();
     if (!result) result = NativeTestSave();
     if (!result) {
@@ -81,6 +110,6 @@ int main(void)
     native_engine_destroy(engine);
     unlink(path);
     if (result) fprintf(stderr, "native engine test failed: %d\n", result);
-    else puts("native copies, pointer arithmetic, save format, and flash round-trip passed");
+    else puts("native copies, OAM matrices, pointer arithmetic, save format, and flash round-trip passed");
     return result;
 }
