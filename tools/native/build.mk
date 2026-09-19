@@ -72,6 +72,7 @@ $(NATIVE_C_OBJS): tools/native/prepare_source.py
 $(NATIVE_C_OBJS) $(NATIVE_DATA_OBJS) $(NATIVE_ENGINE_O) $(NATIVE_BIOS_O) $(NATIVE_RAYLIB_MAIN_O) $(NATIVE_BENCH_O) $(KINDLE_FRONTEND_O): tools/native/build.mk tools/native/performance.mk Makefile $(NATIVE_CC_STAMP)
 ifneq (,$(findstring -fprofile-use=$(NATIVE_PGO_PROFILE),$(NATIVE_CFLAGS)))
 $(NATIVE_C_OBJS) $(NATIVE_DATA_OBJS) $(NATIVE_ENGINE_O) $(NATIVE_BIOS_O) $(NATIVE_RAYLIB_MAIN_O) $(NATIVE_BENCH_O): $(NATIVE_PGO_PROFILE)
+$(NATIVE_OBJ_DIR)/native_test_game.o $(NATIVE_BUILD_DIR)/test_main.o: $(NATIVE_PGO_PROFILE)
 endif
 -include $(NATIVE_C_OBJS:.o=.o.d) $(NATIVE_DATA_OBJS:.o=.d)
 
