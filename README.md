@@ -2,8 +2,6 @@
 
 pokeemerald-wasm is a recompilation of the original [pret/pokeemerald](https://github.com/pret/pokeemerald) decompilation to WebAssembly, with a browser frontend for running Pokémon Emerald on the web.
 
-Play it at [pokeemerald.com](https://pokeemerald.com).
-
 [Join our Discord server](https://discord.gg/u24yh5b83N)
 
 For the 3D renderer built from this port, see [pokeemerald-3d](https://github.com/tripplyons/pokeemerald-3d).

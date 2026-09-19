@@ -12,7 +12,3 @@ watch_dir = ["web", "src", "include", "data", "graphics", "sound", "tools", "Mak
 directory = "./dist/cloudflare"
 html_handling = "auto-trailing-slash"
 not_found_handling = "none"
-
-[[routes]]
-pattern = "pokeemerald.com"
-custom_domain = true
