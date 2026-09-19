@@ -7,7 +7,6 @@
 #define DISPLAY_WIDTH 240
 #define DISPLAY_HEIGHT 160
 #define DISPLAY_PIXELS (DISPLAY_WIDTH * DISPLAY_HEIGHT)
-#define RGBA_CHANNELS 4
 
 #define LAYER_BG0 0x01
 #define LAYER_BG1 0x02
@@ -32,13 +31,6 @@
 #define DMA_ENABLE 0x8000
 #define GPU_REG_U16_COUNT (REG_OFFSET_DMA0 / 2)
 
-struct Rgb
-{
-    u8 r;
-    u8 g;
-    u8 b;
-};
-
 struct HblankDmaGpuReg
 {
     bool8 active;
@@ -52,14 +44,38 @@ struct BgLayer
     u8 type;
 };
 
-static u8 sWasmDisplayRgba[DISPLAY_PIXELS * RGBA_CHANNELS];
+// Window registers resolved for one scanline.
+struct WindowLine
+{
+    bool8 win0Active;
+    bool8 win1Active;
+    u16 win0h;
+    u16 win1h;
+    u8 win0Mask;
+    u8 win1Mask;
+    u8 outsideMask;
+};
+
+struct BlendState
+{
+    u8 effect;
+    u8 sourceTargets;
+    u8 destTargets;
+    u8 eva;
+    u8 evb;
+};
+
+// Pixels are stored as little-endian words holding the bytes R, G, B, A.
+static u32 sWasmDisplayRgba[DISPLAY_PIXELS];
 static u8 sLayerData[DISPLAY_PIXELS];
 static struct HblankDmaGpuReg sHblankDmaGpuRegs[GPU_REG_U16_COUNT];
 
-static inline u8 *Ptr8(u32 address)
-{
-    return (u8 *)address;
-}
+// Registers and palettes cannot change during a render, so everything that
+// depends only on the frame or the scanline is resolved once per frame.
+static u32 sPaletteRgba[512];
+static u8 sWindowMasks[DISPLAY_PIXELS];
+static u8 sBlendEvy[DISPLAY_HEIGHT];
+static struct BlendState sBlend;
 
 static inline u16 *Ptr16(u32 address)
 {
@@ -91,18 +107,21 @@ static inline u32 Word(u32 offset)
     return ReadU32(REG_BASE + offset);
 }
 
-static inline u8 ClampBlend(u32 value)
+static inline u32 ClampBlend(u32 value)
 {
     return value > 255 ? 255 : value;
 }
 
-static inline struct Rgb GbaColor(u16 value)
+static inline u32 PackRgba(u32 r, u32 g, u32 b)
 {
-    struct Rgb color;
-    color.r = (u8)((value & 31) * 255 / 31);
-    color.g = (u8)(((value >> 5) & 31) * 255 / 31);
-    color.b = (u8)(((value >> 10) & 31) * 255 / 31);
-    return color;
+    return r | (g << 8) | (b << 16) | 0xff000000;
+}
+
+static inline u32 GbaColor(u16 value)
+{
+    return PackRgba((value & 31) * 255 / 31,
+                    ((value >> 5) & 31) * 255 / 31,
+                    ((value >> 10) & 31) * 255 / 31);
 }
 
 static bool8 InWindowRange(u8 value, u16 range)
@@ -171,98 +190,134 @@ static u16 ScanlineGpuReg(u32 offset, u8 y)
     return ReadU16(REG_BASE + offset);
 }
 
-static u8 WindowMask(u8 x, u8 y)
+static void LoadWindowLine(u8 y, struct WindowLine *line)
 {
     const u16 dispcnt = REG_DISPCNT;
     const u16 windowsEnabled = dispcnt & 0xe000;
 
-    if (!windowsEnabled)
-        return WINDOW_ALL_LAYERS;
-
-    if ((dispcnt & 0x2000)
-     && InWindowRange(x, ScanlineGpuReg(REG_OFFSET_WIN0H, y))
-     && InWindowRange(y, REG_WIN0V))
-        return REG_WININ & WINDOW_ALL_LAYERS;
-
-    if ((dispcnt & 0x4000)
-     && InWindowRange(x, ScanlineGpuReg(REG_OFFSET_WIN1H, y))
-     && InWindowRange(y, REG_WIN1V))
-        return (REG_WININ >> 8) & WINDOW_ALL_LAYERS;
-
-    return REG_WINOUT & WINDOW_ALL_LAYERS;
+    line->win0Active = (dispcnt & 0x2000) && InWindowRange(y, REG_WIN0V);
+    line->win1Active = (dispcnt & 0x4000) && InWindowRange(y, REG_WIN1V);
+    if (line->win0Active)
+        line->win0h = ScanlineGpuReg(REG_OFFSET_WIN0H, y);
+    if (line->win1Active)
+        line->win1h = ScanlineGpuReg(REG_OFFSET_WIN1H, y);
+    line->win0Mask = REG_WININ & WINDOW_ALL_LAYERS;
+    line->win1Mask = (REG_WININ >> 8) & WINDOW_ALL_LAYERS;
+    line->outsideMask = windowsEnabled ? REG_WINOUT & WINDOW_ALL_LAYERS : WINDOW_ALL_LAYERS;
 }
 
-static struct Rgb ActiveBlendColor(struct Rgb color, u8 layer, u32 pixel, bool8 effectsEnabled, u8 y, bool8 forceAlphaBlend)
+static inline u8 WindowMaskAt(u8 x, const struct WindowLine *line)
 {
-    const u16 bldcnt = REG_BLDCNT;
-    const u8 effect = (bldcnt >> 6) & 3;
-    const u8 sourceTargets = bldcnt & WINDOW_ALL_LAYERS;
-    const bool8 isSourceTarget = (sourceTargets & layer) || (forceAlphaBlend && effect == 1);
-    u8 evy;
+    if (line->win0Active && InWindowRange(x, line->win0h))
+        return line->win0Mask;
+    if (line->win1Active && InWindowRange(x, line->win1h))
+        return line->win1Mask;
+    return line->outsideMask;
+}
 
-    if ((!effectsEnabled && !(forceAlphaBlend && effect == 1)) || !isSourceTarget || effect == 0)
+static u8 WindowMask(u8 x, u8 y)
+{
+    struct WindowLine line;
+
+    LoadWindowLine(y, &line);
+    return WindowMaskAt(x, &line);
+}
+
+static inline u32 ActiveBlendColor(u32 color, u8 layer, u32 pixel, bool8 effectsEnabled, u8 y, bool8 forceAlphaBlend)
+{
+    const u8 effect = sBlend.effect;
+    const bool8 forcedAlpha = forceAlphaBlend && effect == 1;
+    const bool8 isSourceTarget = (sBlend.sourceTargets & layer) || forcedAlpha;
+    u32 r;
+    u32 g;
+    u32 b;
+
+    if ((!effectsEnabled && !forcedAlpha) || !isSourceTarget || effect == 0)
         return color;
 
-    if (effect == 1 && ((bldcnt >> 8) & sLayerData[pixel]))
-    {
-        const u16 alpha = REG_BLDALPHA;
-        const u8 eva = (alpha & 0x1f) > 16 ? 16 : alpha & 0x1f;
-        const u8 evb = ((alpha >> 8) & 0x1f) > 16 ? 16 : (alpha >> 8) & 0x1f;
-        struct Rgb blended;
-        const u32 p = pixel * RGBA_CHANNELS;
+    r = color & 0xff;
+    g = (color >> 8) & 0xff;
+    b = (color >> 16) & 0xff;
 
-        blended.r = ClampBlend(((u32)color.r * eva + (u32)sWasmDisplayRgba[p] * evb) >> 4);
-        blended.g = ClampBlend(((u32)color.g * eva + (u32)sWasmDisplayRgba[p + 1] * evb) >> 4);
-        blended.b = ClampBlend(((u32)color.b * eva + (u32)sWasmDisplayRgba[p + 2] * evb) >> 4);
-        return blended;
+    if (effect == 1)
+    {
+        const u32 below = sWasmDisplayRgba[pixel];
+
+        if (!(sBlend.destTargets & sLayerData[pixel]))
+            return color;
+
+        r = ClampBlend((r * sBlend.eva + (below & 0xff) * sBlend.evb) >> 4);
+        g = ClampBlend((g * sBlend.eva + ((below >> 8) & 0xff) * sBlend.evb) >> 4);
+        b = ClampBlend((b * sBlend.eva + ((below >> 16) & 0xff) * sBlend.evb) >> 4);
+    }
+    else if (effect == 2)
+    {
+        const u32 evy = sBlendEvy[y];
+
+        r = r + (((255 - r) * evy) >> 4);
+        g = g + (((255 - g) * evy) >> 4);
+        b = b + (((255 - b) * evy) >> 4);
+    }
+    else
+    {
+        const u32 evy = sBlendEvy[y];
+
+        r = r - ((r * evy) >> 4);
+        g = g - ((g * evy) >> 4);
+        b = b - ((b * evy) >> 4);
     }
 
-    evy = ScanlineGpuReg(REG_OFFSET_BLDY, y) & 0x1f;
-    if (evy > 16)
-        evy = 16;
-
-    if (effect == 2)
-    {
-        color.r = color.r + (((255 - color.r) * evy) >> 4);
-        color.g = color.g + (((255 - color.g) * evy) >> 4);
-        color.b = color.b + (((255 - color.b) * evy) >> 4);
-    }
-    else if (effect == 3)
-    {
-        color.r = color.r - ((color.r * evy) >> 4);
-        color.g = color.g - ((color.g * evy) >> 4);
-        color.b = color.b - ((color.b * evy) >> 4);
-    }
-
-    return color;
+    return PackRgba(r, g, b);
 }
 
-static void PutPixel(s32 x, s32 y, struct Rgb color, u8 layer, bool8 forceAlphaBlend)
+// Callers guarantee x < DISPLAY_WIDTH and y < DISPLAY_HEIGHT.
+static inline void PutPixel(u32 x, u32 y, u32 color, u8 layer, bool8 forceAlphaBlend)
 {
-    u8 mask;
-    u32 pixel;
-    u32 p;
+    const u32 pixel = y * DISPLAY_WIDTH + x;
+    const u8 mask = sWindowMasks[pixel];
 
-    if (x < 0 || y < 0 || x >= DISPLAY_WIDTH || y >= DISPLAY_HEIGHT)
-        return;
-
-    mask = WindowMask(x, y);
     if (layer != LAYER_BACKDROP && !(mask & layer))
         return;
 
-    pixel = y * DISPLAY_WIDTH + x;
-    color = ActiveBlendColor(color, layer, pixel, mask & LAYER_BACKDROP, y, forceAlphaBlend);
-    p = pixel * RGBA_CHANNELS;
-    sWasmDisplayRgba[p] = color.r;
-    sWasmDisplayRgba[p + 1] = color.g;
-    sWasmDisplayRgba[p + 2] = color.b;
-    sWasmDisplayRgba[p + 3] = 255;
+    sWasmDisplayRgba[pixel] = ActiveBlendColor(color, layer, pixel, mask & LAYER_BACKDROP, y, forceAlphaBlend);
     sLayerData[pixel] = layer;
+}
+
+static void PrepareFrame(void)
+{
+    const u16 *pltt = (const u16 *)PLTT;
+    const u16 bldcnt = REG_BLDCNT;
+    const u16 alpha = REG_BLDALPHA;
+
+    for (u32 i = 0; i < ARRAY_COUNT(sPaletteRgba); i++)
+        sPaletteRgba[i] = GbaColor(pltt[i]);
+
+    sBlend.effect = (bldcnt >> 6) & 3;
+    sBlend.sourceTargets = bldcnt & WINDOW_ALL_LAYERS;
+    sBlend.destTargets = (bldcnt >> 8) & WINDOW_ALL_LAYERS;
+    sBlend.eva = (alpha & 0x1f) > 16 ? 16 : alpha & 0x1f;
+    sBlend.evb = ((alpha >> 8) & 0x1f) > 16 ? 16 : (alpha >> 8) & 0x1f;
+
+    for (u32 y = 0; y < DISPLAY_HEIGHT; y++)
+    {
+        struct WindowLine line;
+        u8 *masks = &sWindowMasks[y * DISPLAY_WIDTH];
+
+        LoadWindowLine(y, &line);
+        for (u32 x = 0; x < DISPLAY_WIDTH; x++)
+            masks[x] = WindowMaskAt(x, &line);
+
+        if (sBlend.effect >= 2)
+        {
+            const u8 evy = ScanlineGpuReg(REG_OFFSET_BLDY, y) & 0x1f;
+            sBlendEvy[y] = evy > 16 ? 16 : evy;
+        }
+    }
 }
 
 static void ClearScreen(void)
 {
-    const struct Rgb color = GbaColor(ReadU16(BG_PLTT));
+    const u32 color = sPaletteRgba[0];
 
     for (u32 y = 0; y < DISPLAY_HEIGHT; y++)
         for (u32 x = 0; x < DISPLAY_WIDTH; x++)
@@ -271,84 +326,101 @@ static void ClearScreen(void)
 
 static void RenderBitmapMode3(void)
 {
+    const u16 *vram = (const u16 *)VRAM;
+
     for (u32 i = 0; i < DISPLAY_PIXELS; i++)
     {
-        const struct Rgb color = GbaColor(ReadU16(VRAM + i * 2));
-        const u32 p = i * RGBA_CHANNELS;
-        sWasmDisplayRgba[p] = color.r;
-        sWasmDisplayRgba[p + 1] = color.g;
-        sWasmDisplayRgba[p + 2] = color.b;
-        sWasmDisplayRgba[p + 3] = 255;
+        sWasmDisplayRgba[i] = GbaColor(vram[i]);
         sLayerData[i] = LAYER_BG2;
     }
 }
 
 static void RenderBitmapMode4(u16 dispcnt)
 {
-    const u32 page = dispcnt & 0x10 ? 0xA000 : 0;
+    const u8 *vram = (const u8 *)VRAM + (dispcnt & 0x10 ? 0xA000 : 0);
 
     for (u32 i = 0; i < DISPLAY_PIXELS; i++)
     {
-        const u8 colorIndex = *Ptr8(VRAM + page + i);
-        const struct Rgb color = GbaColor(ReadU16(PLTT + colorIndex * 2));
-        const u32 p = i * RGBA_CHANNELS;
-        sWasmDisplayRgba[p] = color.r;
-        sWasmDisplayRgba[p + 1] = color.g;
-        sWasmDisplayRgba[p + 2] = color.b;
-        sWasmDisplayRgba[p + 3] = 255;
+        sWasmDisplayRgba[i] = sPaletteRgba[vram[i]];
         sLayerData[i] = LAYER_BG2;
     }
 }
 
-static bool8 TextBgPixel(u8 bg, u8 x, u8 y, struct Rgb *color)
+static void RenderTextBg(u8 bg)
 {
+    const u8 *vram = (const u8 *)VRAM;
     const u16 cnt = ReadU16(REG_BASE + REG_OFFSET_BG0CNT + bg * 2);
-    const u32 charBase = VRAM + ((cnt >> 2) & 3) * 0x4000;
-    const u32 screenBase = VRAM + ((cnt >> 8) & 31) * 0x800;
+    const u8 *chars = vram + ((cnt >> 2) & 3) * 0x4000;
+    const u8 *screen = vram + ((cnt >> 8) & 31) * 0x800;
     const bool8 color256 = (cnt & 0x80) != 0;
     const u8 size = (cnt >> 14) & 3;
     const u16 width = size & 1 ? 512 : 256;
     const u16 height = size & 2 ? 512 : 256;
     const u32 hofsOffset = REG_OFFSET_BG0HOFS + bg * 4;
-    const u16 hofs = ScanlineGpuReg(hofsOffset, y) & 511;
-    const u16 vofs = ScanlineGpuReg(hofsOffset + 2, y) & 511;
-    const u16 sx = (x + hofs) & (width - 1);
-    const u16 sy = (y + vofs) & (height - 1);
-    const u8 block = (sx >= 256 ? 1 : 0) + (sy >= 256 ? (size == 3 ? 2 : 1) : 0);
-    const u8 mapX = (sx & 255) >> 3;
-    const u8 mapY = (sy & 255) >> 3;
-    const u16 entry = ReadU16(screenBase + block * 0x800 + (mapY * 32 + mapX) * 2);
-    const u16 tile = entry & 0x3ff;
-    const u8 palette = (entry >> 12) & 15;
-    const u8 px = entry & 0x400 ? 7 - (sx & 7) : sx & 7;
-    const u8 py = entry & 0x800 ? 7 - (sy & 7) : sy & 7;
-    u8 colorIndex;
+    const u8 layer = 1 << bg;
 
-    if (color256)
+    for (u32 y = 0; y < DISPLAY_HEIGHT; y++)
     {
-        colorIndex = *Ptr8(charBase + tile * 64 + py * 8 + px);
-        if (!colorIndex)
-            return FALSE;
-        *color = GbaColor(ReadU16(PLTT + colorIndex * 2));
-        return TRUE;
-    }
+        const u16 hofs = ScanlineGpuReg(hofsOffset, y) & 511;
+        const u16 vofs = ScanlineGpuReg(hofsOffset + 2, y) & 511;
+        const u16 sy = (y + vofs) & (height - 1);
+        const u8 rowBlock = sy >= 256 ? (size == 3 ? 2 : 1) : 0;
+        const u16 *mapRow = (const u16 *)(screen + rowBlock * 0x800 + ((sy & 255) >> 3) * 64);
+        u32 x = 0;
 
-    {
-        const u8 packed = *Ptr8(charBase + tile * 32 + py * 4 + (px >> 1));
-        colorIndex = px & 1 ? packed >> 4 : packed & 15;
-    }
-    if (!colorIndex)
-        return FALSE;
+        // Each run stays inside one tile, so its map entry is read once.
+        while (x < DISPLAY_WIDTH)
+        {
+            const u16 sx = (x + hofs) & (width - 1);
+            const u16 entry = mapRow[(sx >> 8) * 0x400 + ((sx & 255) >> 3)];
+            const u16 tile = entry & 0x3ff;
+            const bool8 flipX = (entry & 0x400) != 0;
+            const u8 py = entry & 0x800 ? 7 - (sy & 7) : sy & 7;
+            u32 run = 8 - (sx & 7);
 
-    *color = GbaColor(ReadU16(PLTT + (palette * 16 + colorIndex) * 2));
-    return TRUE;
+            if (run > DISPLAY_WIDTH - x)
+                run = DISPLAY_WIDTH - x;
+
+            if (color256)
+            {
+                const u8 *tileRow = chars + tile * 64 + py * 8;
+
+                for (u32 i = 0; i < run; i++)
+                {
+                    const u8 px = flipX ? 7 - ((sx + i) & 7) : (sx + i) & 7;
+                    const u8 colorIndex = tileRow[px];
+
+                    if (colorIndex)
+                        PutPixel(x + i, y, sPaletteRgba[colorIndex], layer, FALSE);
+                }
+            }
+            else
+            {
+                const u8 *tileRow = chars + tile * 32 + py * 4;
+                const u32 packed = tileRow[0] | (tileRow[1] << 8) | (tileRow[2] << 16) | ((u32)tileRow[3] << 24);
+                const u32 *palette = &sPaletteRgba[((entry >> 12) & 15) * 16];
+
+                for (u32 i = 0; packed && i < run; i++)
+                {
+                    const u8 px = flipX ? 7 - ((sx + i) & 7) : (sx + i) & 7;
+                    const u8 colorIndex = (packed >> (px * 4)) & 15;
+
+                    if (colorIndex)
+                        PutPixel(x + i, y, palette[colorIndex], layer, FALSE);
+                }
+            }
+
+            x += run;
+        }
+    }
 }
 
-static bool8 AffineBgPixel(u8 bg, u8 x, u8 y, struct Rgb *color)
+static void RenderAffineBg(u8 bg)
 {
+    const u8 *vram = (const u8 *)VRAM;
     const u16 cnt = ReadU16(REG_BASE + REG_OFFSET_BG0CNT + bg * 2);
-    const u32 charBase = VRAM + ((cnt >> 2) & 3) * 0x4000;
-    const u32 screenBase = VRAM + ((cnt >> 8) & 31) * 0x800;
+    const u8 *chars = vram + ((cnt >> 2) & 3) * 0x4000;
+    const u8 *screen = vram + ((cnt >> 8) & 31) * 0x800;
     const u16 sizes[] = {128, 256, 512, 1024};
     const u16 size = sizes[(cnt >> 14) & 3];
     const bool8 wrap = (cnt & 0x2000) != 0;
@@ -359,28 +431,33 @@ static bool8 AffineBgPixel(u8 bg, u8 x, u8 y, struct Rgb *color)
     const s16 pd = Signed16(ReadU16(REG_BASE + reg + 6));
     const s32 refX = Signed28(Word(reg + 8));
     const s32 refY = Signed28(Word(reg + 12));
-    s32 sx = (refX + pa * x + pb * y) >> 8;
-    s32 sy = (refY + pc * x + pd * y) >> 8;
-    u16 tile;
-    u8 colorIndex;
+    const u8 layer = 1 << bg;
 
-    if (wrap)
+    for (s32 y = 0; y < DISPLAY_HEIGHT; y++)
     {
-        sx &= size - 1;
-        sy &= size - 1;
-    }
-    else if (sx < 0 || sy < 0 || sx >= size || sy >= size)
-    {
-        return FALSE;
-    }
+        for (s32 x = 0; x < DISPLAY_WIDTH; x++)
+        {
+            s32 sx = (refX + pa * x + pb * y) >> 8;
+            s32 sy = (refY + pc * x + pd * y) >> 8;
+            u16 tile;
+            u8 colorIndex;
 
-    tile = *Ptr8(screenBase + (sy >> 3) * (size >> 3) + (sx >> 3));
-    colorIndex = *Ptr8(charBase + tile * 64 + (sy & 7) * 8 + (sx & 7));
-    if (!colorIndex)
-        return FALSE;
+            if (wrap)
+            {
+                sx &= size - 1;
+                sy &= size - 1;
+            }
+            else if (sx < 0 || sy < 0 || sx >= size || sy >= size)
+            {
+                continue;
+            }
 
-    *color = GbaColor(ReadU16(PLTT + colorIndex * 2));
-    return TRUE;
+            tile = screen[(sy >> 3) * (size >> 3) + (sx >> 3)];
+            colorIndex = chars[tile * 64 + (sy & 7) * 8 + (sx & 7)];
+            if (colorIndex)
+                PutPixel(x, y, sPaletteRgba[colorIndex], layer, FALSE);
+        }
+    }
 }
 
 static u8 BgLayersForMode(u16 dispcnt, struct BgLayer *layers)
@@ -429,42 +506,36 @@ static u16 ObjTileOffset(u16 tileBase, u8 tileX, u8 tileY, u8 width, bool8 color
     return tileBase + tileY * 32 + tileX * (color256 ? 2 : 1);
 }
 
-static bool8 ObjPixel(u16 tileBase, u8 x, u8 y, u8 width, bool8 color256, u8 palette, bool8 mapping1d, struct Rgb *color)
+static inline bool8 ObjPixel(u16 tileBase, u8 x, u8 y, u8 width, bool8 color256, u8 palette, bool8 mapping1d, u32 *color)
 {
+    const u8 *tiles = (const u8 *)(VRAM + 0x10000);
+    const u32 *objPalette = &sPaletteRgba[256];
     const u16 tileOffset = ObjTileOffset(tileBase, x >> 3, y >> 3, width, color256, mapping1d);
     u8 colorIndex;
 
     if (color256)
     {
-        colorIndex = *Ptr8(VRAM + 0x10000 + tileOffset * 32 + (y & 7) * 8 + (x & 7));
+        colorIndex = tiles[tileOffset * 32 + (y & 7) * 8 + (x & 7)];
     }
     else
     {
-        const u8 packed = *Ptr8(VRAM + 0x10000 + tileOffset * 32 + (y & 7) * 4 + ((x & 7) >> 1));
+        const u8 packed = tiles[tileOffset * 32 + (y & 7) * 4 + ((x & 7) >> 1)];
         colorIndex = x & 1 ? packed >> 4 : packed & 15;
     }
 
     if (!colorIndex)
         return FALSE;
 
-    *color = GbaColor(ReadU16(OBJ_PLTT + (color256 ? colorIndex : palette * 16 + colorIndex) * 2));
+    *color = objPalette[color256 ? colorIndex : palette * 16 + colorIndex];
     return TRUE;
 }
 
 static void RenderBgLayer(u8 bg, u8 type)
 {
-    struct Rgb color;
-    const u8 layer = 1 << bg;
-
-    for (u32 y = 0; y < DISPLAY_HEIGHT; y++)
-    {
-        for (u32 x = 0; x < DISPLAY_WIDTH; x++)
-        {
-            const bool8 hasPixel = type ? AffineBgPixel(bg, x, y, &color) : TextBgPixel(bg, x, y, &color);
-            if (hasPixel)
-                PutPixel(x, y, color, layer, FALSE);
-        }
-    }
+    if (type)
+        RenderAffineBg(bg);
+    else
+        RenderTextBg(bg);
 }
 
 static void RenderSprites(u16 dispcnt, s8 priority)
@@ -475,17 +546,17 @@ static void RenderSprites(u16 dispcnt, s8 priority)
         {{16, 8}, {32, 8}, {32, 16}, {64, 32}},
         {{8, 16}, {8, 32}, {16, 32}, {32, 64}},
     };
-    struct Rgb color;
+    const u16 *oam = (const u16 *)OAM;
+    u32 color;
 
     if (!(dispcnt & 0x1000))
         return;
 
     for (s32 i = 127; i >= 0; i--)
     {
-        const u32 base = OAM + i * 8;
-        const u16 a0 = ReadU16(base);
-        const u16 a1 = ReadU16(base + 2);
-        const u16 a2 = ReadU16(base + 4);
+        const u16 a0 = oam[i * 4];
+        const u16 a1 = oam[i * 4 + 1];
+        const u16 a2 = oam[i * 4 + 2];
         const u8 affineMode = (a0 >> 8) & 3;
         const u8 objMode = (a0 >> 10) & 3;
         const bool8 forceAlphaBlend = objMode == 1;
@@ -518,12 +589,11 @@ static void RenderSprites(u16 dispcnt, s8 priority)
 
         if (affine)
         {
-            const u8 matrix = (a1 >> 9) & 31;
-            const u32 matrixBase = OAM + matrix * 32;
-            const s16 pa = Signed16(ReadU16(matrixBase + 6));
-            const s16 pb = Signed16(ReadU16(matrixBase + 14));
-            const s16 pc = Signed16(ReadU16(matrixBase + 22));
-            const s16 pd = Signed16(ReadU16(matrixBase + 30));
+            const u16 *matrix = &oam[((a1 >> 9) & 31) * 16];
+            const s16 pa = Signed16(matrix[3]);
+            const s16 pb = Signed16(matrix[7]);
+            const s16 pc = Signed16(matrix[11]);
+            const s16 pd = Signed16(matrix[15]);
             const u16 drawW = affineMode == 3 ? w * 2 : w;
             const u16 drawH = affineMode == 3 ? h * 2 : h;
             const s32 drawCx = drawW / 2;
@@ -533,6 +603,9 @@ static void RenderSprites(u16 dispcnt, s8 priority)
 
             for (u32 y = 0; y < drawH; y++)
             {
+                if ((u32)(oy + y) >= DISPLAY_HEIGHT)
+                    continue;
+
                 for (u32 x = 0; x < drawW; x++)
                 {
                     const s32 dx = (s32)x - drawCx;
@@ -540,6 +613,8 @@ static void RenderSprites(u16 dispcnt, s8 priority)
                     const s32 px = ((pa * dx + pb * dy) >> 8) + texCx;
                     const s32 py = ((pc * dx + pd * dy) >> 8) + texCy;
 
+                    if ((u32)(ox + x) >= DISPLAY_WIDTH)
+                        continue;
                     if (px < 0 || py < 0 || px >= w || py >= h)
                         continue;
                     if (ObjPixel(tileBase, px, py, w, color256, palette, mapping1d, &color))
@@ -551,11 +626,16 @@ static void RenderSprites(u16 dispcnt, s8 priority)
         {
             for (u32 y = 0; y < h; y++)
             {
+                if ((u32)(oy + y) >= DISPLAY_HEIGHT)
+                    continue;
+
                 for (u32 x = 0; x < w; x++)
                 {
                     const u8 px = a1 & 0x1000 ? w - 1 - x : x;
                     const u8 py = a1 & 0x2000 ? h - 1 - y : y;
 
+                    if ((u32)(ox + x) >= DISPLAY_WIDTH)
+                        continue;
                     if (ObjPixel(tileBase, px, py, w, color256, palette, mapping1d, &color))
                         PutPixel(ox + x, oy + y, color, LAYER_OBJ, forceAlphaBlend);
                 }
@@ -603,6 +683,7 @@ void WasmRenderFrame(void)
     const u8 mode = dispcnt & 7;
 
     WasmRefreshHblankDmaGpuRegs();
+    PrepareFrame();
     if (mode == 3)
         RenderBitmapMode3();
     else if (mode == 4)
@@ -616,7 +697,7 @@ void WasmRenderFrame(void)
 
 u8 *WasmDisplayBuffer(void)
 {
-    return sWasmDisplayRgba;
+    return (u8 *)sWasmDisplayRgba;
 }
 
 u32 WasmDisplayBufferSize(void)
