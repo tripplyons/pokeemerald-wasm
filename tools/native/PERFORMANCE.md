@@ -263,12 +263,22 @@ scores were 7,062,731 frames/s for batches of 1, 7,556,594 for 16, and
 7,661,826 for 256. Moving from 1 to 16 recovered 7.0%; moving from 16 to
 256 added 1.4%. All benchmark correctness gates passed.
 
-The Kindle max-speed loop currently checks the clock after every frame.
-Raylib already checks every 16 frames. These Mac measurements justify a
-Kindle experiment but do not establish a gain or acceptable input latency on
-Kindle hardware. They do not improve the existing headless benchmark, which
-already times the whole fixed batch without per-frame clock checks.
+The Kindle max-speed loop now checks the clock every 16 frames, matching
+Raylib. Frame limits are still checked after every frame. Compared with
+checking every frame, a slice can run up to 15 extra simulation frames
+before polling input. The full Cortex-A7 Linux cross-build passes. A focused
+sanitizer check of the source loop passes for exact frame limits, deadline
+boundaries, and frame-counter wraparound. The build log and check source
+are `kindle-clock-build.log` and `kindle-clock-check.c` in the opportunities
+directory.
+
+The Mac measurements do not establish a gain or acceptable input latency on
+Kindle hardware. This change does not improve the existing headless
+benchmark, which already times the whole fixed batch without per-frame
+clock checks.
 
 Raw results, isolated diagnostic sources and binaries, profile data, and
 replay comparisons are under the ignored `build/native/perf/opportunities/`
-directory. The production engine and benchmark remain unchanged.
+directory. The production engine and benchmark remain unchanged; desktop
+builds now use the local PGO profile, and the Kindle frontend batches clock
+checks.

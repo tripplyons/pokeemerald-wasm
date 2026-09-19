@@ -944,12 +944,13 @@ int main(int argc, char **argv)
 
         uint32_t framesBefore = frame;
         if (unbounded) {
-            // Run flat out, but return often enough to poll input and refresh the display.
+            // Check time every 16 frames, but enforce the frame limit on every frame.
             double sliceEnd = now + INPUT_POLL_SECONDS;
             do {
                 native_engine_run_frame(engine);
                 frame++;
-            } while ((frameLimit == 0 || frame < (uint32_t)frameLimit) && monotonic_seconds() < sliceEnd);
+            } while ((frameLimit == 0 || frame < (uint32_t)frameLimit)
+                     && (((frame - framesBefore) & 15) != 0 || monotonic_seconds() < sliceEnd));
             frameAccumulator = 0.0;
         } else {
             int framesToRun = (int)frameAccumulator;
