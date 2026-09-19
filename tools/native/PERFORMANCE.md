@@ -134,3 +134,46 @@ next candidate. It must keep alpha blending and sprite ordering exact.
 ```sh
 build/native/pokeemerald-bench --script tools/wasm_replays/mudkip_starter.txt --render-trace build/native/perf/trace.txt
 ```
+
+## Native OAM offset arithmetic
+
+The baseline is commit `c505a2a3c`, using the same M3 Max, compiler, flags,
+and no PGO. The OAM helper used a `uint32_t` loop index, so `i * 2` and
+`i * 8` required 32-bit wraparound before being added to 64-bit pointers.
+Changing the index to `size_t` removes that requirement. In the linked
+`BuildOamBuffer`, Clang emits zero of the 17 offset masks present before.
+The records written and the loop bounds are unchanged.
+
+Initial measurements were inconclusive while another CPU-heavy application
+was running. After it stopped, all measurements below used the normal
+wall-clock benchmark, without profiling, compilation, clock substitutions,
+or thread-priority changes during measurement. Each binary ran eight passes
+per run, and run order alternated.
+
+In a comparison of three candidate implementations, medians of three runs
+were 7,459,235 frames/s for the baseline and 7,660,389 for the pointer-sized
+index (+2.7%). Explicit four-record batching reached 7,682,285 and ARM64
+interleaved stores reached 7,718,043. Those added only 0.3% and 0.8% over the
+index change, so the retained implementation is the one-line index change.
+
+A separate comparison after rebuilding the final source reproduced the gain.
+These are medians of three alternating eight-pass runs per binary:
+
+| Scenario | Baseline frames/s | Pointer-sized index frames/s | Change |
+| --- | ---: | ---: | ---: |
+| Overworld | 4,761,361 | 4,763,232 | +0.0% |
+| Menu | 11,650,905 | 12,108,461 | +3.9% |
+| Battle | 5,973,925 | 6,042,492 | +1.1% |
+| Aggregate score | 7,467,773 | 7,643,286 | +2.4% |
+
+The final native build and tests pass. The six unchanged framebuffer goldens,
+sprite-sort checks, and determinism checks pass. All 27,229 render-trace
+hashes match the baseline. The BIOS checks also pass with AddressSanitizer
+and UndefinedBehaviorSanitizer, including all 16,641 OAM count/limit pairs
+with unaligned buffers and guard bytes. The helper compiles for x86-64 and
+ARM Cortex-A7; performance was measured only on this ARM64 Mac.
+
+Raw results, disassembly, and traces are in the ignored `build/native/perf/`
+directory. `ablation-*.json` records the candidate comparison and
+`final-*.json` records the final rebuild comparison. The production benchmark
+and goldens are unchanged.

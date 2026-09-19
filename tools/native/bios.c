@@ -169,7 +169,7 @@ static void copy_oam_matrices(uintptr_t src, uintptr_t dest,
     source = (uint8_t *)src;
     output = (uint8_t *)dest;
     memcpy(&dummy_oam, (uint8_t *)dummy, sizeof(dummy_oam));
-    uint32_t i = 0;
+    size_t i = 0;
     for (; i < oam_count; i++) {
         uint16_t value;
         memcpy(&value, source + i * 2, sizeof(value));
