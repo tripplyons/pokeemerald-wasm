@@ -74,3 +74,63 @@ Remaining candidates from the baseline profile, in priority order:
 
 These are measured hotspots or follow-up hypotheses, not claims that the
 remaining work can safely be skipped.
+
+## Software renderer text backgrounds
+
+The baseline is commit `27f39a8fe`. Simulation costs about 0.2 microseconds
+per frame and rendering about 92, so a frontend that draws every frame spends
+over 99% of its engine time in `WasmRenderFrame`. With the render phases
+marked `noinline`, sampling put 696 of 804 renderer samples in `RenderTextBg`.
+
+Two facts about the Mudkip replay shaped the change:
+
+- 81% of frames enable windows and alpha blending with no background as a
+  blend source. Every background pixel loaded a window mask and ran blend
+  checks that could not apply.
+- Of 17,768 tile rows visited per frame, 48% were empty, 51% fully opaque,
+  and about 1% mixed. 47% belonged to tiles with no drawn pixel at all.
+
+The renderer now resolves each layer once per scanline. A line with one
+window mask is hidden, drawn with plain stores, or sent to the old per-pixel
+path. Alpha blending and lines with mixed masks keep the per-pixel path.
+Brightness effects use a palette built for the line's BLDY. Each map row
+also records which tile columns draw anything, and its eight scanlines visit
+only those columns.
+
+`--render-trace` renders all 27,229 replay frames, writes one display hash
+per frame, and times only the renderer. Results are medians of three
+alternating runs per binary.
+
+| Measurement | Baseline us/frame | New us/frame | Change |
+| --- | ---: | ---: | ---: |
+| Replay trace | 97.54 | 53.76 | -44.9% |
+| Overworld end state | 98.21 | 54.57 | -44.4% |
+| Menu end state | 89.94 | 60.06 | -33.2% |
+| Battle end state | 90.14 | 58.88 | -34.7% |
+
+An earlier alternating round measured the trace at 93.35 before and 53.62
+after (-42.6%). The engine score did not move: 7,279,124 before and
+7,353,670 after.
+
+The two traces are byte-identical, covering 7,373 distinct screens. The six
+goldens and `make native-test` pass. In the browser, the 18 Mudkip replay
+screenshots are byte-identical between the two renderers.
+
+Rejected experiments, all with identical output:
+
+- A branchless select for whole tile rows measured 74 against 67 for the
+  branching loop at that stage. Transparent rows exit early, and that matters
+  more than mispredictions.
+- Removing every store from the tile plotter saved only 2 microseconds, so
+  the cost is tile iteration and decode, not memory writes.
+- Per-line resolution for sprites, a hoisted backdrop color, and a channel
+  table for palette conversion together measured 53.43 against 53.62. That is
+  within run-to-run drift of about 4%, so they were dropped.
+
+Opaque tile rows now dominate. Backgrounds draw about 8,900 of them per
+frame for 4,800 rows of screen, so occlusion between opaque layers is the
+next candidate. It must keep alpha blending and sprite ordering exact.
+
+```sh
+build/native/pokeemerald-bench --script tools/wasm_replays/mudkip_starter.txt --render-trace build/native/perf/trace.txt
+```

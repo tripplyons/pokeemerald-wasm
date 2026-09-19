@@ -116,6 +116,12 @@ any hash mismatch, nondeterminism, or invalid timer sample.
 `info.scenario_render_us` reports the mean software-render time per scenario
 end state. It is measured after the end checkpoint and never feeds the score.
 
+Pass `--render-trace <path>` instead of `--golden` to check a renderer change
+against the whole replay. It renders every replay frame, writes one display
+hash per frame to `<path>`, and prints the mean render time. Compare the file
+against one written by a build of the previous renderer; they must be
+identical unless the rendering change is intentional.
+
 `make native-pgo` builds an instrumented bench, trains a profile on the
 benchmark replay, writes `build/native/pgo/native.profdata`, and rebuilds
 `native-bench` with it. Later desktop native builds use the profile while it

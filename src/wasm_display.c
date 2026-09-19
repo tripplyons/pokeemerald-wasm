@@ -77,6 +77,30 @@ static u8 sWindowMasks[DISPLAY_PIXELS];
 static u8 sBlendEvy[DISPLAY_HEIGHT];
 static struct BlendState sBlend;
 
+// A scanline whose pixels all share one window mask stores it here, which
+// settles a layer's visibility and blending for the whole line at once.
+static u8 sLineMasks[DISPLAY_HEIGHT];
+static bool8 sLineMaskUniform[DISPLAY_HEIGHT];
+
+// Brightness effects depend only on the color and the line's BLDY, so they
+// are applied to the palette. BLDY_NONE marks the palette as not built.
+#define BLDY_NONE 0xff
+static u32 sBrightnessPaletteRgba[512];
+static u8 sBrightnessPaletteEvy;
+
+// About half of the background tiles on screen are fully transparent. Each
+// 32-byte VRAM tile slot is classified at most once per frame. A 256-color
+// tile spans two slots, and the last character block can address tiles up
+// to 0x1C000.
+enum
+{
+    TILE_SLOT_UNKNOWN,
+    TILE_SLOT_EMPTY,
+    TILE_SLOT_DRAWN,
+};
+#define TILE_SLOT_SIZE 32
+static u8 sTileSlots[0x1C000 / TILE_SLOT_SIZE];
+
 static inline u16 *Ptr16(u32 address)
 {
     return (u16 *)address;
@@ -122,6 +146,28 @@ static inline u32 GbaColor(u16 value)
     return PackRgba((value & 31) * 255 / 31,
                     ((value >> 5) & 31) * 255 / 31,
                     ((value >> 10) & 31) * 255 / 31);
+}
+
+static inline u32 BrightnessColor(u32 color, u8 effect, u32 evy)
+{
+    u32 r = color & 0xff;
+    u32 g = (color >> 8) & 0xff;
+    u32 b = (color >> 16) & 0xff;
+
+    if (effect == 2)
+    {
+        r = r + (((255 - r) * evy) >> 4);
+        g = g + (((255 - g) * evy) >> 4);
+        b = b + (((255 - b) * evy) >> 4);
+    }
+    else
+    {
+        r = r - ((r * evy) >> 4);
+        g = g - ((g * evy) >> 4);
+        b = b - ((b * evy) >> 4);
+    }
+
+    return PackRgba(r, g, b);
 }
 
 static bool8 InWindowRange(u8 value, u16 range)
@@ -228,46 +274,21 @@ static inline u32 ActiveBlendColor(u32 color, u8 layer, u32 pixel, bool8 effects
     const u8 effect = sBlend.effect;
     const bool8 forcedAlpha = forceAlphaBlend && effect == 1;
     const bool8 isSourceTarget = (sBlend.sourceTargets & layer) || forcedAlpha;
-    u32 r;
-    u32 g;
-    u32 b;
+    u32 below;
 
     if ((!effectsEnabled && !forcedAlpha) || !isSourceTarget || effect == 0)
         return color;
 
-    r = color & 0xff;
-    g = (color >> 8) & 0xff;
-    b = (color >> 16) & 0xff;
+    if (effect != 1)
+        return BrightnessColor(color, effect, sBlendEvy[y]);
 
-    if (effect == 1)
-    {
-        const u32 below = sWasmDisplayRgba[pixel];
+    if (!(sBlend.destTargets & sLayerData[pixel]))
+        return color;
 
-        if (!(sBlend.destTargets & sLayerData[pixel]))
-            return color;
-
-        r = ClampBlend((r * sBlend.eva + (below & 0xff) * sBlend.evb) >> 4);
-        g = ClampBlend((g * sBlend.eva + ((below >> 8) & 0xff) * sBlend.evb) >> 4);
-        b = ClampBlend((b * sBlend.eva + ((below >> 16) & 0xff) * sBlend.evb) >> 4);
-    }
-    else if (effect == 2)
-    {
-        const u32 evy = sBlendEvy[y];
-
-        r = r + (((255 - r) * evy) >> 4);
-        g = g + (((255 - g) * evy) >> 4);
-        b = b + (((255 - b) * evy) >> 4);
-    }
-    else
-    {
-        const u32 evy = sBlendEvy[y];
-
-        r = r - ((r * evy) >> 4);
-        g = g - ((g * evy) >> 4);
-        b = b - ((b * evy) >> 4);
-    }
-
-    return PackRgba(r, g, b);
+    below = sWasmDisplayRgba[pixel];
+    return PackRgba(ClampBlend(((color & 0xff) * sBlend.eva + (below & 0xff) * sBlend.evb) >> 4),
+                    ClampBlend((((color >> 8) & 0xff) * sBlend.eva + ((below >> 8) & 0xff) * sBlend.evb) >> 4),
+                    ClampBlend((((color >> 16) & 0xff) * sBlend.eva + ((below >> 16) & 0xff) * sBlend.evb) >> 4));
 }
 
 // Callers guarantee x < DISPLAY_WIDTH and y < DISPLAY_HEIGHT.
@@ -281,6 +302,32 @@ static inline void PutPixel(u32 x, u32 y, u32 color, u8 layer, bool8 forceAlphaB
 
     sWasmDisplayRgba[pixel] = ActiveBlendColor(color, layer, pixel, mask & LAYER_BACKDROP, y, forceAlphaBlend);
     sLayerData[pixel] = layer;
+}
+
+// The browser build links no libc, so fills are written as loops.
+static inline void FillBytes(u8 *dest, u8 value, u32 count)
+{
+    for (u32 i = 0; i < count; i++)
+        dest[i] = value;
+}
+
+// Covers the same pixels as InWindowRange, including ranges that wrap.
+static void FillWindowRange(u8 *masks, u16 range, u8 mask)
+{
+    const u32 rawStart = range >> 8;
+    const u32 rawEnd = range & 0xff;
+    const u32 start = rawStart > DISPLAY_WIDTH ? DISPLAY_WIDTH : rawStart;
+    const u32 end = rawEnd > DISPLAY_WIDTH ? DISPLAY_WIDTH : rawEnd;
+
+    if (rawStart <= rawEnd)
+    {
+        FillBytes(masks + start, mask, end - start);
+    }
+    else
+    {
+        FillBytes(masks + start, mask, DISPLAY_WIDTH - start);
+        FillBytes(masks, mask, end);
+    }
 }
 
 static void PrepareFrame(void)
@@ -298,14 +345,26 @@ static void PrepareFrame(void)
     sBlend.eva = (alpha & 0x1f) > 16 ? 16 : alpha & 0x1f;
     sBlend.evb = ((alpha >> 8) & 0x1f) > 16 ? 16 : (alpha >> 8) & 0x1f;
 
+    sBrightnessPaletteEvy = BLDY_NONE;
+    FillBytes(sTileSlots, TILE_SLOT_UNKNOWN, sizeof(sTileSlots));
+
     for (u32 y = 0; y < DISPLAY_HEIGHT; y++)
     {
         struct WindowLine line;
         u8 *masks = &sWindowMasks[y * DISPLAY_WIDTH];
+        u8 differing = 0;
 
         LoadWindowLine(y, &line);
-        for (u32 x = 0; x < DISPLAY_WIDTH; x++)
-            masks[x] = WindowMaskAt(x, &line);
+        FillBytes(masks, line.outsideMask, DISPLAY_WIDTH);
+        if (line.win1Active)
+            FillWindowRange(masks, line.win1h, line.win1Mask);
+        if (line.win0Active)
+            FillWindowRange(masks, line.win0h, line.win0Mask);
+
+        for (u32 x = 1; x < DISPLAY_WIDTH; x++)
+            differing |= masks[x] ^ masks[0];
+        sLineMasks[y] = masks[0];
+        sLineMaskUniform[y] = !differing;
 
         if (sBlend.effect >= 2)
         {
@@ -315,13 +374,127 @@ static void PrepareFrame(void)
     }
 }
 
+static const u32 *BrightnessPalette(u8 evy)
+{
+    if (sBrightnessPaletteEvy != evy)
+    {
+        for (u32 i = 0; i < ARRAY_COUNT(sPaletteRgba); i++)
+            sBrightnessPaletteRgba[i] = BrightnessColor(sPaletteRgba[i], sBlend.effect, evy);
+        sBrightnessPaletteEvy = evy;
+    }
+
+    return sBrightnessPaletteRgba;
+}
+
+enum
+{
+    LINE_HIDDEN,  // The window hides the layer on the whole line.
+    LINE_DIRECT,  // Every pixel is a plain store from the returned palette.
+    LINE_GENERAL, // Pixels need PutPixel's per-pixel window and blend checks.
+};
+
+// Decides once how a layer reaches a scanline. Alpha blending reads the
+// pixel below, so it always takes the general path.
+static u8 ResolveLine(u8 layer, u32 y, const u32 **palette)
+{
+    const u8 mask = sLineMasks[y];
+
+    if (!sLineMaskUniform[y])
+        return LINE_GENERAL;
+    if (layer != LAYER_BACKDROP && !(mask & layer))
+        return LINE_HIDDEN;
+
+    *palette = sPaletteRgba;
+    if (sBlend.effect == 0 || !(sBlend.sourceTargets & layer) || !(mask & LAYER_BACKDROP))
+        return LINE_DIRECT;
+    if (sBlend.effect == 1)
+        return LINE_GENERAL;
+
+    *palette = BrightnessPalette(sBlendEvy[y]);
+    return LINE_DIRECT;
+}
+
 static void ClearScreen(void)
 {
-    const u32 color = sPaletteRgba[0];
-
     for (u32 y = 0; y < DISPLAY_HEIGHT; y++)
-        for (u32 x = 0; x < DISPLAY_WIDTH; x++)
-            PutPixel(x, y, color, LAYER_BACKDROP, FALSE);
+    {
+        const u32 *palette;
+
+        if (ResolveLine(LAYER_BACKDROP, y, &palette) == LINE_DIRECT)
+        {
+            u32 *dest = &sWasmDisplayRgba[y * DISPLAY_WIDTH];
+
+            for (u32 x = 0; x < DISPLAY_WIDTH; x++)
+                dest[x] = palette[0];
+            FillBytes(&sLayerData[y * DISPLAY_WIDTH], LAYER_BACKDROP, DISPLAY_WIDTH);
+        }
+        else
+        {
+            for (u32 x = 0; x < DISPLAY_WIDTH; x++)
+                PutPixel(x, y, sPaletteRgba[0], LAYER_BACKDROP, FALSE);
+        }
+    }
+}
+
+static inline u32 ReverseNibbles(u32 value)
+{
+    value = ((value >> 4) & 0x0f0f0f0f) | ((value & 0x0f0f0f0f) << 4);
+    value = ((value >> 8) & 0x00ff00ff) | ((value & 0x00ff00ff) << 8);
+    return (value >> 16) | (value << 16);
+}
+
+static inline u64 ReverseBytes(u64 value)
+{
+    value = ((value >> 8) & 0x00ff00ff00ff00ffULL) | ((value & 0x00ff00ff00ff00ffULL) << 8);
+    value = ((value >> 16) & 0x0000ffff0000ffffULL) | ((value & 0x0000ffff0000ffffULL) << 16);
+    return (value >> 32) | (value << 32);
+}
+
+// The tile-row plotters take color indices packed lowest-first in screen
+// order, with zero for every pixel outside the run. A row with no
+// transparent pixel is always a whole tile.
+static inline void PlotTileRow4(u32 *dest, u8 *layers, u32 packed, const u32 *palette, u8 layer)
+{
+    if (!((packed - 0x11111111) & ~packed & 0x88888888))
+    {
+        for (u32 i = 0; i < 8; i++)
+        {
+            dest[i] = palette[(packed >> (i * 4)) & 15];
+            layers[i] = layer;
+        }
+        return;
+    }
+
+    for (; packed; packed >>= 4, dest++, layers++)
+    {
+        if (packed & 15)
+        {
+            *dest = palette[packed & 15];
+            *layers = layer;
+        }
+    }
+}
+
+static inline void PlotTileRow8(u32 *dest, u8 *layers, u64 packed, const u32 *palette, u8 layer)
+{
+    if (!((packed - 0x0101010101010101ULL) & ~packed & 0x8080808080808080ULL))
+    {
+        for (u32 i = 0; i < 8; i++)
+        {
+            dest[i] = palette[(packed >> (i * 8)) & 255];
+            layers[i] = layer;
+        }
+        return;
+    }
+
+    for (; packed; packed >>= 8, dest++, layers++)
+    {
+        if (packed & 255)
+        {
+            *dest = palette[packed & 255];
+            *layers = layer;
+        }
+    }
 }
 
 static void RenderBitmapMode3(void)
@@ -346,6 +519,40 @@ static void RenderBitmapMode4(u16 dispcnt)
     }
 }
 
+static bool8 TileSlotEmpty(u32 slot)
+{
+    if (sTileSlots[slot] == TILE_SLOT_UNKNOWN)
+    {
+        const u32 *words = (const u32 *)(VRAM + slot * TILE_SLOT_SIZE);
+        u32 drawn = 0;
+
+        for (u32 i = 0; i < TILE_SLOT_SIZE / 4; i++)
+            drawn |= words[i];
+        sTileSlots[slot] = drawn ? TILE_SLOT_DRAWN : TILE_SLOT_EMPTY;
+    }
+
+    return sTileSlots[slot] == TILE_SLOT_EMPTY;
+}
+
+// Returns one bit per map column whose tile draws anything. A 32-column map
+// repeats its bits in the upper half, so rotating the result by the first
+// visible column wraps the same way the map does.
+static u64 DrawnTileColumns(const u16 *mapRow, u32 columns, u32 charSlot, bool8 color256)
+{
+    u64 drawn = 0;
+
+    for (u32 column = 0; column < columns; column++)
+    {
+        const u16 tile = mapRow[(column >> 5) * 0x400 + (column & 31)] & 0x3ff;
+        const u32 slot = charSlot + (color256 ? tile * 2 : tile);
+
+        if (!TileSlotEmpty(slot) || (color256 && !TileSlotEmpty(slot + 1)))
+            drawn |= 1ULL << column;
+    }
+
+    return columns == 32 ? drawn | (drawn << 32) : drawn;
+}
+
 static void RenderTextBg(u8 bg)
 {
     const u8 *vram = (const u8 *)VRAM;
@@ -358,6 +565,8 @@ static void RenderTextBg(u8 bg)
     const u16 height = size & 2 ? 512 : 256;
     const u32 hofsOffset = REG_OFFSET_BG0HOFS + bg * 4;
     const u8 layer = 1 << bg;
+    const u16 *drawnRow = NULL;
+    u64 drawnColumns = 0;
 
     for (u32 y = 0; y < DISPLAY_HEIGHT; y++)
     {
@@ -366,11 +575,30 @@ static void RenderTextBg(u8 bg)
         const u16 sy = (y + vofs) & (height - 1);
         const u8 rowBlock = sy >= 256 ? (size == 3 ? 2 : 1) : 0;
         const u16 *mapRow = (const u16 *)(screen + rowBlock * 0x800 + ((sy & 255) >> 3) * 64);
-        u32 x = 0;
+        const u32 *linePalette;
+        const u8 lineMode = ResolveLine(layer, y, &linePalette);
+        const u32 slots = (DISPLAY_WIDTH + (hofs & 7) + 7) >> 3;
+        u64 visible;
+
+        if (lineMode == LINE_HIDDEN)
+            continue;
+
+        // The eight scanlines that cross a map row share its drawn columns.
+        if (mapRow != drawnRow)
+        {
+            drawnColumns = DrawnTileColumns(mapRow, width >> 3, (chars - vram) / TILE_SLOT_SIZE, color256);
+            drawnRow = mapRow;
+        }
+
+        // Bit k is the k-th tile on the line, which starts at x = k * 8 - (hofs & 7).
+        visible = (drawnColumns >> (hofs >> 3)) | (drawnColumns << ((64 - (hofs >> 3)) & 63));
+        visible &= (1ULL << slots) - 1;
 
         // Each run stays inside one tile, so its map entry is read once.
-        while (x < DISPLAY_WIDTH)
+        for (; visible; visible &= visible - 1)
         {
+            const s32 tileX = __builtin_ctzll(visible) * 8 - (hofs & 7);
+            const u32 x = tileX < 0 ? 0 : tileX;
             const u16 sx = (x + hofs) & (width - 1);
             const u16 entry = mapRow[(sx >> 8) * 0x400 + ((sx & 255) >> 3)];
             const u16 tile = entry & 0x3ff;
@@ -381,7 +609,39 @@ static void RenderTextBg(u8 bg)
             if (run > DISPLAY_WIDTH - x)
                 run = DISPLAY_WIDTH - x;
 
-            if (color256)
+            if (lineMode == LINE_DIRECT)
+            {
+                u32 *dest = &sWasmDisplayRgba[y * DISPLAY_WIDTH + x];
+                u8 *layers = &sLayerData[y * DISPLAY_WIDTH + x];
+
+                if (color256)
+                {
+                    const u8 *tileRow = chars + tile * 64 + py * 8;
+                    u64 packed = 0;
+
+                    for (u32 i = 0; i < 8; i++)
+                        packed |= (u64)tileRow[i] << (i * 8);
+                    if (flipX)
+                        packed = ReverseBytes(packed);
+                    packed >>= (sx & 7) * 8;
+                    if (run < 8)
+                        packed &= (1ULL << (run * 8)) - 1;
+                    PlotTileRow8(dest, layers, packed, linePalette, layer);
+                }
+                else
+                {
+                    const u8 *tileRow = chars + tile * 32 + py * 4;
+                    u32 packed = tileRow[0] | (tileRow[1] << 8) | (tileRow[2] << 16) | ((u32)tileRow[3] << 24);
+
+                    if (flipX)
+                        packed = ReverseNibbles(packed);
+                    packed >>= (sx & 7) * 4;
+                    if (run < 8)
+                        packed &= (1u << (run * 4)) - 1;
+                    PlotTileRow4(dest, layers, packed, &linePalette[((entry >> 12) & 15) * 16], layer);
+                }
+            }
+            else if (color256)
             {
                 const u8 *tileRow = chars + tile * 64 + py * 8;
 
@@ -409,8 +669,6 @@ static void RenderTextBg(u8 bg)
                         PutPixel(x + i, y, palette[colorIndex], layer, FALSE);
                 }
             }
-
-            x += run;
         }
     }
 }

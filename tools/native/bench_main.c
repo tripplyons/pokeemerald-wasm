@@ -207,6 +207,48 @@ static void run_scenario(const ButtonEvent *events, uint32_t eventCount,
     native_engine_destroy(engine);
 }
 
+// Renders every replay frame so a renderer change can be checked against a
+// whole playthrough instead of the scenario checkpoints alone. The trace
+// holds one display hash per frame. Only the renderer is timed.
+static void run_render_trace(const ButtonEvent *events, uint32_t eventCount,
+                             uint32_t lastFrame, const char *tracePath)
+{
+    FILE *trace = fopen(tracePath, "w");
+    if (!trace)
+        fail_json("cannot write render trace");
+
+    NativeEngine *engine = native_engine_create();
+    if (!engine)
+        fail_json("engine create failed");
+    native_engine_boot(engine);
+
+    uint32_t eventIndex = 0;
+    uint32_t held = 0;
+    double renderSeconds = 0.0;
+    for (uint32_t frame = 0; frame <= lastFrame; frame++) {
+        while (eventIndex < eventCount && events[eventIndex].frame == frame) {
+            if (events[eventIndex].press)
+                held |= events[eventIndex].mask;
+            else
+                held &= ~events[eventIndex].mask;
+            eventIndex++;
+            native_engine_set_keys(engine, held);
+        }
+        native_engine_run_frame(engine);
+
+        double renderStart = now_seconds();
+        native_engine_render(engine);
+        renderSeconds += now_seconds() - renderStart;
+        fprintf(trace, "%u %016llx\n", frame,
+                (unsigned long long)native_engine_hash_display(engine));
+    }
+
+    native_engine_destroy(engine);
+    fclose(trace);
+    printf("{\"render_trace_frames\": %u, \"render_us\": %.2f}\n",
+           lastFrame + 1, renderSeconds * 1e6 / (lastFrame + 1));
+}
+
 static char *read_file(const char *path)
 {
     FILE *file = fopen(path, "rb");
@@ -278,6 +320,7 @@ int main(int argc, char **argv)
     const char *scriptPath = NULL;
     const char *goldenPath = NULL;
     const char *writeGoldenPath = NULL;
+    const char *renderTracePath = NULL;
     int passes = DEFAULT_PASSES;
 
     check_sprite_sort();
@@ -289,6 +332,8 @@ int main(int argc, char **argv)
             goldenPath = argv[++i];
         else if (!strcmp(argv[i], "--write-golden") && i + 1 < argc)
             writeGoldenPath = argv[++i];
+        else if (!strcmp(argv[i], "--render-trace") && i + 1 < argc)
+            renderTracePath = argv[++i];
         else if (!strcmp(argv[i], "--passes") && i + 1 < argc)
             passes = atoi(argv[++i]);
     }
@@ -304,6 +349,12 @@ int main(int argc, char **argv)
     uint32_t eventCount = load_script(scriptPath, events);
     if (eventCount == 0)
         fail_json("replay script has no button events");
+
+    if (renderTracePath) {
+        run_render_trace(events, eventCount, kScenarios[kScenarioCount - 1].replayFrame,
+                         renderTracePath);
+        return 0;
+    }
 
     PassResult results[MAX_PASSES] = {0};
     for (int pass = 0; pass < passes; pass++) {
