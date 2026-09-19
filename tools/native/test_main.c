@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 
+extern int NativeTestOamTail(void);
 extern int NativeTestSave(void);
 extern int NativeTestLoad(void);
 extern uint32_t NativePointerToWord(const void *pointer);
@@ -12,7 +13,7 @@ extern void *NativeDecodePointer(unsigned long word);
 extern void CpuSet(uintptr_t src, uintptr_t dst, uint32_t mode);
 extern void CpuFastSet(uintptr_t src, uintptr_t dst, uint32_t mode);
 extern void WasmCopyOamMatrices(uintptr_t src, uintptr_t dst, uintptr_t dummy,
-                                uint32_t count, uint32_t limit);
+                                uint32_t count, uint32_t limit, uint32_t end);
 
 extern void ObjAffineSet(uintptr_t src, uintptr_t dst, uint32_t count, uint32_t offset);
 extern void BgAffineSet(uintptr_t src, uintptr_t dst, uint32_t count);
@@ -108,9 +109,21 @@ static int check_oam_matrices(void)
             for (unsigned int i = 0; i < 128; i++)
                 memcpy(expected + 1 + i * 8 + 6, matrices + 1 + i * 2, 2);
             WasmCopyOamMatrices((uintptr_t)(matrices + 1), (uintptr_t)(actual + 1),
-                               (uintptr_t)(dummy + 1), count, limit);
+                               (uintptr_t)(dummy + 1), count, limit, 128);
             if (memcmp(actual, expected, sizeof(actual))) return 8;
         }
+    }
+
+    // A short end leaves every later record untouched, which is how the sprite
+    // code refreshes only the records below the active OAM count.
+    for (unsigned int end = 0; end <= 128; end++) {
+        for (unsigned int i = 0; i < sizeof(actual); i++)
+            actual[i] = expected[i] = (unsigned char)(i * 29 + end);
+        for (unsigned int i = 0; i < end; i++)
+            memcpy(expected + 1 + i * 8 + 6, matrices + 1 + i * 2, 2);
+        WasmCopyOamMatrices((uintptr_t)(matrices + 1), (uintptr_t)(actual + 1),
+                           (uintptr_t)(dummy + 1), end, end, end);
+        if (memcmp(actual, expected, sizeof(actual))) return 9;
     }
     return 0;
 }
@@ -173,6 +186,7 @@ int main(void)
     if (!result) result = check_oam_matrices();
     if (!result) result = check_affine_math();
     if (!result) result = check_pointer_arithmetic();
+    if (!result) result = NativeTestOamTail();
     if (!result) result = NativeTestSave();
     if (!result) {
         native_engine_save_flash_if_changed(engine, path, 0, true);
@@ -187,6 +201,6 @@ int main(void)
     native_engine_destroy(engine);
     unlink(path);
     if (result) fprintf(stderr, "native engine test failed: %d\n", result);
-    else puts("native copies, OAM matrices, affine math, pointer arithmetic, save format, and flash round-trip passed");
+    else puts("native copies, OAM matrices, affine math, pointer arithmetic, OAM transfers, save format, and flash round-trip passed");
     return result;
 }

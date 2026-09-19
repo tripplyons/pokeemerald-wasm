@@ -440,7 +440,17 @@ static s16 CalcSpriteSortY(const struct Sprite *sprite)
 }
 
 extern void WasmCopyOamMatrices(const struct OamMatrix *matrices, struct OamData *oamBuffer,
-                                const struct OamData *dummyOam, u32 oamCount, u32 oamLimit);
+                                const struct OamData *dummyOam, u32 oamCount, u32 oamLimit,
+                                u32 oamEnd);
+
+// Records at and beyond sOamCount hold dummy attributes and matrix
+// components, so they only change when the matrices or the OAM bounds
+// change. While they match what OAM already holds, both the fill and the
+// OAM transfer can stop at sOamCount.
+static struct OamMatrix sOamMatrixShadow[OAM_MATRIX_COUNT];
+static u8 sOamShadowCount;
+static u8 sOamShadowLimit;
+static bool8 sOamTailLoaded;
 #endif
 
 void UpdateOamCoords(void)
@@ -764,7 +774,20 @@ u32 WasmCheckSpriteSort(void)
 void CopyMatricesToOamBuffer(void)
 {
 #if WASM
-    WasmCopyOamMatrices(gOamMatrices, gMain.oamBuffer, &gDummyOamData, sOamCount, gOamLimit);
+    if (sOamTailLoaded
+     && sOamShadowCount == sOamCount
+     && sOamShadowLimit == gOamLimit
+     && !__builtin_memcmp(sOamMatrixShadow, gOamMatrices, sizeof(gOamMatrices)))
+    {
+        WasmCopyOamMatrices(gOamMatrices, gMain.oamBuffer, &gDummyOamData, sOamCount, sOamCount, sOamCount);
+        return;
+    }
+
+    WasmCopyOamMatrices(gOamMatrices, gMain.oamBuffer, &gDummyOamData, sOamCount, gOamLimit, 128);
+    __builtin_memcpy(sOamMatrixShadow, gOamMatrices, sizeof(gOamMatrices));
+    sOamShadowCount = sOamCount;
+    sOamShadowLimit = gOamLimit;
+    sOamTailLoaded = FALSE;
 #else
     u8 i;
     for (i = 0; i < OAM_MATRIX_COUNT; i++)
@@ -965,13 +988,37 @@ void ResetOamRange(u8 start, u8 end)
     u8 i;
     for (i = start; i < end; i++)
         gMain.oamBuffer[i] = *(struct OamData *)&gDummyOamData;
+#if WASM
+    sOamTailLoaded = FALSE;
+#endif
 }
 
 void LoadOam(void)
 {
     if (!gMain.oamLoadDisabled)
+#if WASM
+    {
+        // Transferring every record also reloads the dummy tail, so the next
+        // frames only have to refresh the records the sprite system uses.
+        if (sOamTailLoaded)
+            CpuCopy32(gMain.oamBuffer, (void *)OAM, sOamCount * sizeof(struct OamData));
+        else
+            CpuCopy32(gMain.oamBuffer, (void *)OAM, sizeof(gMain.oamBuffer));
+        sOamTailLoaded = TRUE;
+    }
+#else
         CpuCopy32(gMain.oamBuffer, (void *)OAM, sizeof(gMain.oamBuffer));
+#endif
 }
+
+#if WASM
+// Reported by the fill and copy macros for every write into OAM outside this
+// file, and called directly where the OAM buffer is written past sOamCount.
+void WasmOamBufferModified(void)
+{
+    sOamTailLoaded = FALSE;
+}
+#endif
 
 void ClearSpriteCopyRequests(void)
 {

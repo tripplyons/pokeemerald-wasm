@@ -257,6 +257,7 @@
 static inline void WasmDmaFill16(u16 value, void *dest, u32 size)
 {
     u16 *out = dest;
+    WASM_WATCH_OAM(dest, size);
     size /= sizeof(*out);
     while (size--)
         *out++ = value;
@@ -265,6 +266,7 @@ static inline void WasmDmaFill16(u16 value, void *dest, u32 size)
 static inline void WasmDmaFill32(u32 value, void *dest, u32 size)
 {
     u32 *out = dest;
+    WASM_WATCH_OAM(dest, size);
     size /= sizeof(*out);
     while (size--)
         *out++ = value;
@@ -277,12 +279,18 @@ static inline void WasmDmaFill32(u32 value, void *dest, u32 size)
 #undef DmaCopy16
 #undef DmaCopy32
 
+static inline void WasmDmaCopy(void *dest, const void *src, u32 size)
+{
+    WASM_WATCH_OAM(dest, size);
+    __builtin_memcpy(dest, src, size);
+}
+
 #define DmaFill16(dmaNum, value, dest, size) WasmDmaFill16(value, (void *)(dest), size)
 #define DmaFill32(dmaNum, value, dest, size) WasmDmaFill32(value, (void *)(dest), size)
 #define DmaClear16(dmaNum, dest, size) WasmDmaFill16(0, (void *)(dest), size)
 #define DmaClear32(dmaNum, dest, size) WasmDmaFill32(0, (void *)(dest), size)
-#define DmaCopy16(dmaNum, src, dest, size) __builtin_memcpy((void *)(dest), src, size)
-#define DmaCopy32(dmaNum, src, dest, size) __builtin_memcpy((void *)(dest), src, size)
+#define DmaCopy16(dmaNum, src, dest, size) WasmDmaCopy((void *)(dest), src, size)
+#define DmaCopy32(dmaNum, src, dest, size) WasmDmaCopy((void *)(dest), src, size)
 #endif
 
 #define IntrEnable(flags)                                       \

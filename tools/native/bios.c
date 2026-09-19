@@ -193,7 +193,8 @@ static void merge_oam_matrices(const uint8_t *source, OamBytes records[4])
 #endif
 
 static void copy_oam_matrices(uintptr_t src, uintptr_t dest,
-                              uintptr_t dummy, uint32_t oam_count, uint32_t oam_limit)
+                              uintptr_t dummy, uint32_t oam_count, uint32_t oam_limit,
+                              uint32_t oam_end)
 {
     const uint8_t *restrict source;
     uint8_t *restrict output;
@@ -231,7 +232,7 @@ static void copy_oam_matrices(uintptr_t src, uintptr_t dest,
     }
 #if defined(__aarch64__)
     // Preserve attributes beyond the OAM limit while replacing their matrix values.
-    for (; i + 8 <= 128; i += 8) {
+    for (; i + 8 <= oam_end; i += 8) {
         OamBytes records[4];
         for (size_t j = 0; j < 4; j++)
             memcpy(&records[j], output + i * 8 + j * 16, sizeof(records[j]));
@@ -240,7 +241,7 @@ static void copy_oam_matrices(uintptr_t src, uintptr_t dest,
             memcpy(output + i * 8 + j * 16, &records[j], sizeof(records[j]));
     }
 #endif
-    for (; i < 128; i++) {
+    for (; i < oam_end; i++) {
         uint16_t value;
         memcpy(&value, source + i * 2, sizeof(value));
         memcpy(output + i * 8 + 6, &value, sizeof(value));
@@ -262,7 +263,7 @@ uint32_t Div(uint32_t num, uint32_t den) { return den ? (uint32_t)((int32_t)num 
 void LZ77UnCompVram(uintptr_t src, uintptr_t dest) { lz77(src, dest); }
 void LZ77UnCompWram(uintptr_t src, uintptr_t dest) { lz77(src, dest); }
 void ObjAffineSet(uintptr_t src, uintptr_t dest, uint32_t count, uint32_t offset) { obj_affine_set(src, dest, count, offset); }
-void WasmCopyOamMatrices(uintptr_t src, uintptr_t dest, uintptr_t dummy, uint32_t count, uint32_t limit) { copy_oam_matrices(src, dest, dummy, count, limit); }
+void WasmCopyOamMatrices(uintptr_t src, uintptr_t dest, uintptr_t dummy, uint32_t count, uint32_t limit, uint32_t end) { copy_oam_matrices(src, dest, dummy, count, limit, end); }
 void RLUnCompVram(uintptr_t src, uintptr_t dest) { rl(src, dest); }
 void RLUnCompWram(uintptr_t src, uintptr_t dest) { rl(src, dest); }
 uint32_t Sqrt(uint32_t value) { return (uint32_t)sqrt((double)value); }

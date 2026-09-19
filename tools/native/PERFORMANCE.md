@@ -564,3 +564,70 @@ pass. Raw measurements, prototypes, profiles, binaries, and logs remain in the i
 the comparisons; `experiment-artifacts.json` identifies the saved builds.
 The files named `final` in that directory are the rejected scalar candidate,
 not the retained engine.
+
+## Partial OAM transfers
+
+The baseline is `d22e48ab9`. Profiling the benchmark put about 15% of samples
+in `_platform_memmove`, almost all of it from two fixed 1 KB copies that run
+every frame: `LoadOam` transferring all 128 OAM records and
+`TransferPlttBuffer` transferring the faded palette. A microbenchmark of the
+1 KB copy itself reached 11.4 ns, which is the hardware floor, so no faster
+copy routine can help. The only way to spend less time there is to copy less.
+
+Across the replay the sprite system used a mean of 5.6 of the 128 OAM records.
+The rest hold dummy attributes whose only varying field is the matrix
+component in the last halfword, and 88.4% of frames left the matrices and the
+OAM bounds unchanged. On those frames the records at and beyond `sOamCount`
+already hold exactly what a full transfer would write, so both the dummy fill
+in `CopyMatricesToOamBuffer` and the transfer in `LoadOam` can stop at
+`sOamCount`.
+
+`WasmCopyOamMatrices` gained an `oamEnd` parameter so the matrix fill can stop
+early, and `sprite.c` tracks whether OAM still matches the buffer past the
+active count. The flag only holds while nothing else writes the region. Every
+fill and copy the game has funnels through `CpuSet`, `CpuFastSet`, or the WASM
+`DmaFill`/`DmaCopy` shims, so `WASM_WATCH_OAM` in those four places reports
+any write that overlaps OAM and clears the flag. That covers all thirty-odd
+screens that clear OAM directly without touching any of them. The five places
+that write `gMain.oamBuffer` outside the sprite pipeline are not visible to
+those macros: `link_rfu_3.c` and `save_failed_screen.c` copy their records into
+OAM themselves and so report through the same path, while `digit_obj_util.c`,
+`confetti_util.c`, and `contest_painting.c` call `WasmOamBufferModified`
+directly.
+
+| Scenario | Baseline frames/s | Partial transfer frames/s | Change |
+| --- | ---: | ---: | ---: |
+| Overworld | 6,306,715 | 6,342,777 | +0.6% |
+| Menu | 13,806,737 | 16,309,172 | +18.1% |
+| Battle | 6,679,060 | 7,391,108 | +10.7% |
+| Aggregate score | 8,930,837 | 10,011,251 | +12.1% |
+
+Both binaries were rebuilt with their own freshly trained `make native-pgo`
+profile. The table reports medians of five alternating runs of eight passes
+per binary on an M3 Max with Apple clang 21, with no compilation or other
+verification running alongside. All five paired aggregate comparisons
+improved, with a paired mean gain of 12.4%. An earlier screen of nine
+alternating runs of two passes gave a median gain of 11.2%. These results
+measure the benchmark's three scenarios, not performance throughout the game.
+
+A conservative variant that always transferred the records from `gOamLimit` to
+127, so that no invalidation was needed, gained about 1%. Giving up the tail
+entirely is what produces the result, so the aggressive form plus explicit
+invalidation was kept.
+
+Every measured invocation passed the unchanged six goldens, determinism,
+progression, and sprite-sort checks. All 27,229 render-trace hashes match the
+baseline across the pristine, baseline-PGO, and candidate-PGO builds. The
+replay drives the title screen, main menu, naming screen, wall clock, and
+starter selection, each of which clears OAM directly, so the choke point is
+exercised rather than assumed. Native tests gained `NativeTestOamTail`, which
+checks that both a fill over OAM and a direct `WasmOamBufferModified` call
+force the next transfer to reload every record; removing the flag reset makes
+it fail. The browser replay reaches the Mudkip battle with no page errors.
+Native tests, desktop, and Kindle builds pass. The GBA toolchain is not
+installed here, so `make modern` and `make compare` could not run; the
+preprocessed non-WASM output of every touched file is byte-identical to the
+baseline, so those paths are unchanged.
+
+Raw measurements, binaries, profiles, and traces are in the ignored
+`build/native/perf/round-new/` directory.

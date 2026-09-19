@@ -46,6 +46,10 @@ bool32 ConfettiUtil_Free(void)
     if (sWork == NULL)
         return FALSE;
 
+#if WASM
+    WasmOamBufferModified();
+#endif
+
     for (i = 0; i < sWork->count; i++)
         memcpy(&gMain.oamBuffer[i + 64], &gDummyOamData, sizeof(struct OamData));
 
@@ -63,6 +67,10 @@ bool32 ConfettiUtil_Update(void)
 
     if (sWork == NULL || sWork->array == NULL)
         return FALSE;
+
+#if WASM
+    WasmOamBufferModified();
+#endif
 
     for (i = 0; i < sWork->count; i++)
     {
@@ -176,6 +184,9 @@ u8 ConfettiUtil_Remove(u8 id)
     sWork->array[id].oam.y = DISPLAY_HEIGHT;
     sWork->array[id].oam.x = DISPLAY_WIDTH;
     sWork->array[id].dummied = TRUE;
+#if WASM
+    WasmOamBufferModified();
+#endif
     memcpy(&gMain.oamBuffer[id + 64], &gDummyOamData, sizeof(struct OamData));
     return id;
 }

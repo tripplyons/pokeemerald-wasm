@@ -3,9 +3,40 @@
 #include "native_save.h"
 #include "new_game.h"
 #include "save.h"
+#include "sprite.h"
 
 STATIC_ASSERT(__alignof__(struct Main) >= 16, NativeMainAlignment)
 STATIC_ASSERT(__builtin_offsetof(struct Main, oamBuffer) % 16 == 0, NativeOamAlignment)
+
+int NativeTestOamTail(void)
+{
+    bool8 loadDisabled = gMain.oamLoadDisabled;
+    u8 *oam = (u8 *)OAM;
+    unsigned int i;
+
+    gMain.oamLoadDisabled = FALSE;
+
+    // LoadOam leaves the records past the active sprite count in place, so a
+    // fill over OAM has to make the next transfer reload all of them.
+    LoadOam();
+    CpuFastFill(0xFFFFFFFF, (void *)OAM, OAM_SIZE);
+    LoadOam();
+    if (memcmp(oam, gMain.oamBuffer, sizeof(gMain.oamBuffer)))
+        return 11;
+
+    // Code that reaches OAM or the OAM buffer some other way reports it
+    // itself, which has to force a full transfer the same way.
+    LoadOam();
+    for (i = 0; i < OAM_SIZE; i++)
+        oam[i] = 0xA5;
+    WasmOamBufferModified();
+    LoadOam();
+    if (memcmp(oam, gMain.oamBuffer, sizeof(gMain.oamBuffer)))
+        return 12;
+
+    gMain.oamLoadDisabled = loadDisabled;
+    return 0;
+}
 
 int NativeTestSave(void)
 {

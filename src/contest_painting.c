@@ -505,6 +505,10 @@ static void LoadContestPaintingFrame(u8 contestWinnerId, bool8 isForArtist)
 
 static void InitPaintingMonOamData(u8 contestWinnerId)
 {
+#if WASM
+    WasmOamBufferModified();
+#endif
+
     gMain.oamBuffer[0] = sContestPaintingMonOamData;
     gMain.oamBuffer[0].tileNum = 0;
 

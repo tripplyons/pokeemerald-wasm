@@ -182,6 +182,10 @@ static void CopyWorkToOam(struct DigitPrinter *objWork)
     u32 x = objWork->x;
     u32 oamCount = objWork->oamCount + 1;
 
+#if WASM
+    WasmOamBufferModified();
+#endif
+
     CpuFill16(0, &gMain.oamBuffer[oamId], sizeof(struct OamData) * oamCount);
     for (i = 0, oamId = objWork->firstOamId; i < oamCount; i++, oamId++)
     {
@@ -210,6 +214,10 @@ void DigitObjUtil_PrintNumOn(u32 id, s32 num)
         return;
     if (!sOamWork->array[id].isActive)
         return;
+
+#if WASM
+    WasmOamBufferModified();
+#endif
 
     sOamWork->array[id].lastPrinted = num;
     if (num < 0)
@@ -352,6 +360,10 @@ void DigitObjUtil_DeletePrinter(u32 id)
     oamCount = sOamWork->array[id].oamCount + 1;
     oamId = sOamWork->array[id].firstOamId;
 
+#if WASM
+    WasmOamBufferModified();
+#endif
+
     for (i = 0; i < oamCount; i++, oamId++)
         gMain.oamBuffer[oamId].affineMode = ST_OAM_AFFINE_ERASE;
 
@@ -374,6 +386,11 @@ void DigitObjUtil_HideOrShow(u32 id, bool32 hide)
 
     oamCount = sOamWork->array[id].oamCount + 1;
     oamId = sOamWork->array[id].firstOamId;
+
+#if WASM
+    WasmOamBufferModified();
+#endif
+
     if (hide)
     {
         for (i = 0; i < oamCount; i++, oamId++)

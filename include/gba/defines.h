@@ -61,6 +61,23 @@
 #define OAM      0x7000000
 #define OAM_SIZE 0x400
 
+#if WASM
+void WasmOamBufferModified(void);
+
+// LoadOam only refreshes the OAM records the sprite system currently uses,
+// leaving the rest in place while it still matches the OAM buffer. Any other
+// write into the region ends that, so the fill and copy macros report one.
+#define WASM_WATCH_OAM(dest, size)                                  \
+{                                                                   \
+    const char *oamWatchDest = (const char *)(const void *)(dest);  \
+    if (oamWatchDest < (const char *)(const void *)OAM + OAM_SIZE   \
+     && oamWatchDest + (size) > (const char *)(const void *)OAM)    \
+        WasmOamBufferModified();                                    \
+}
+#else
+#define WASM_WATCH_OAM(dest, size)
+#endif
+
 #define ROM_HEADER_SIZE   0xC0
 
 // Dimensions of a tile in pixels
