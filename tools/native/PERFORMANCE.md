@@ -631,3 +631,73 @@ baseline, so those paths are unchanged.
 
 Raw measurements, binaries, profiles, and traces are in the ignored
 `build/native/perf/round-new/` directory.
+
+## Inline OAM matrix comparison
+
+The baseline is `88dae3432` with its PGO profile. The partial OAM transfer
+compares all 32 matrices against a shadow copy every frame to decide whether
+the dummy tail is still valid. That 256-byte `memcmp` is above the size Clang
+expands inline, so it became a library call. A PC sampler attributed 4.1% of
+all samples to it, the largest single library cost, and 7.6% of samples in
+the menu scenario.
+
+`OamMatricesMatchShadow` replaces the call. It loads each 8-byte matrix as one
+word, accumulates the XOR differences, and tests the result once. With no
+early exit, Clang emits 16 paired vector loads and 16 vector compares inline.
+The comparison result is the same, so every OAM preparation and transfer
+still runs on its original frame.
+
+A first version compared the four `s16` fields separately. Clang
+de-interleaved the fields with `ld4` and table lookups, and four clean rounds
+showed only +0.4% to +1.5%. It was replaced by the word form.
+
+Both binaries were built with their own freshly trained `make native-pgo`
+profile. The table reports medians of eight alternating runs of eight passes
+per binary on the same M3 Max and Apple clang 21.
+
+| Scenario | Baseline frames/s | Inline compare frames/s | Change |
+| --- | ---: | ---: | ---: |
+| Overworld | 6,409,249 | 6,537,150 | +2.0% |
+| Menu | 16,515,106 | 17,156,188 | +3.9% |
+| Battle | 7,617,205 | 7,791,238 | +2.3% |
+| Aggregate score | 10,181,052 | 10,489,222 | +3.0% |
+
+The candidate won all eight paired rounds. One baseline run dropped to
+9,104,979 during background activity, which inflates the paired mean to
++4.8%; the medians are the better estimate. An earlier eight-round comparison
+of the same candidate gave a median gain of 3.2% with paired gains between
+2.5% and 3.8%. These results measure the benchmark's three scenarios, not
+performance throughout the game.
+
+Every measured invocation passed the unchanged six goldens, determinism,
+progression, and sprite-sort checks. All 27,229 render-trace hashes match the
+baseline. `make native-test`, `make native-raylib`, `make native-kindle`, and
+`make wasm` pass. The change is inside an existing `#if WASM` block, so the
+GBA build is unaffected. The browser replay was not rerun, and Kindle speed
+was not measured.
+
+Rejected in this round:
+
+- Branch-free `UpdateOamCoords`. Sampling by scenario put `UpdateOamCoords`
+  and `CalcSpriteSortY` at 23% of menu samples and 17% of battle samples, with
+  hot addresses just after the invisible, sort-Y, and key-changed branches.
+  Computing the sort-Y wrap with bit operations and appending changed sprites
+  with unconditional stores lost 4.5% aggregate after fresh PGO. The
+  branch-free sort-Y alone lost 2.6%. Those branches predict well; the loop's
+  cost is its per-sprite loads and arithmetic.
+- Palette write tracking. The 1 KB `TransferPlttBuffer` copy is 15.7% of menu
+  samples, but `gPlttBufferFaded` is referenced 164 times across 42 source
+  files, often through raw pointers, so reliable invalidation would need broad
+  changes to original game code. Comparing before copying already lost 8.1%.
+
+The score is the mean of per-scenario frames per second, so the 58 ns menu
+frame carries the most weight. One nanosecond saved per menu frame moves the
+score about 0.95%, against about 0.14% for the 153 ns overworld frame.
+
+Sampling used an injected library that suspends the main thread every 150
+microseconds and records its program counter and link register, since
+`ITIMER_PROF` delivered only about 40 samples per second. A debug-info build
+with identical flags resolved samples to inlined source functions with
+`atos -i`. The sampler, scripts, profiles, binaries, raw results, and traces
+are in the ignored `build/native/perf/round-next/` directory. `final.json`
+holds the final comparison.

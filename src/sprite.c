@@ -451,6 +451,27 @@ static struct OamMatrix sOamMatrixShadow[OAM_MATRIX_COUNT];
 static u8 sOamShadowCount;
 static u8 sOamShadowLimit;
 static bool8 sOamTailLoaded;
+
+STATIC_ASSERT(sizeof(struct OamMatrix) == sizeof(u64), OamMatrixFitsOneWord);
+
+// memcmp of this size is a library call. A fixed loop with no early exit
+// vectorizes instead.
+static bool8 OamMatricesMatchShadow(void)
+{
+    u32 i;
+    u64 difference = 0;
+
+    for (i = 0; i < OAM_MATRIX_COUNT; i++)
+    {
+        u64 matrix;
+        u64 shadow;
+
+        __builtin_memcpy(&matrix, &gOamMatrices[i], sizeof(matrix));
+        __builtin_memcpy(&shadow, &sOamMatrixShadow[i], sizeof(shadow));
+        difference |= matrix ^ shadow;
+    }
+    return difference == 0;
+}
 #endif
 
 void UpdateOamCoords(void)
@@ -777,7 +798,7 @@ void CopyMatricesToOamBuffer(void)
     if (sOamTailLoaded
      && sOamShadowCount == sOamCount
      && sOamShadowLimit == gOamLimit
-     && !__builtin_memcmp(sOamMatrixShadow, gOamMatrices, sizeof(gOamMatrices)))
+     && OamMatricesMatchShadow())
     {
         WasmCopyOamMatrices(gOamMatrices, gMain.oamBuffer, &gDummyOamData, sOamCount, sOamCount, sOamCount);
         return;
