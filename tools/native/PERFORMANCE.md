@@ -362,3 +362,56 @@ measurements are `baseline-production-*.json`, `final-production-*.json`, and
 `final-targets.log`, and `final-kindle.log`. The refreshed default profile is
 local at `build/native/pgo/native.profdata` and is recreated by
 `make native-pgo`.
+
+## Two-input ARM64 OAM shuffles
+
+The native helper now selects attribute bytes and matrix bytes in the same
+shuffle. Inactive records take their attributes from the dummy OAM record;
+records beyond the OAM limit take them from the current destination. The
+linked ARM64 code uses two-register `TBL` instructions, removing the separate
+vector mask and OR operations. Active records, partial batches, and the
+non-ARM64 fallback retain their scalar paths. Every OAM preparation and load
+still runs on its original frame.
+
+This round tested eight candidates: two-input shuffles, `TBX` merges, a
+`TBX` tail with the previous fill loop, compact loops, two-way loop unrolling,
+direct OAM copies, compare-before-copy, and inline OAM copies. The two-input
+shuffle was selected for final validation. The copy and loop experiments
+did not establish a useful gain. Prototypes remain outside production code.
+
+The final comparison used the production binary after fresh `make native-pgo`
+training against the preserved `fab610cf7` binary and its previous profile.
+Both use Apple clang 21.0.0, `-O3 -flto`, and PGO on the same M3 Max. These
+are medians of sixteen alternating eight-pass runs per binary with the
+unchanged replay, warmup, measurement count, and framebuffer goldens.
+Compilation and other validation finished before timing.
+
+| Scenario | Previous frames/s | Two-input frames/s | Change |
+| --- | ---: | ---: | ---: |
+| Overworld | 5,489,075 | 5,479,451 | -0.2% |
+| Menu | 13,556,864 | 13,634,380 | +0.6% |
+| Battle | 6,782,326 | 6,876,432 | +1.4% |
+| Aggregate score | 8,606,554 | 8,661,705 | +0.6% |
+
+The candidate scored higher in 15 of 16 paired runs. The mean paired score
+change was +0.86%; a paired bootstrap interval was +0.32% to +1.47% at 95%.
+Background CPU activity caused visible timing variation. The supported gain
+is small and concentrated in menu and battle; overworld is within that
+variation. This does not establish a whole-game, displayed-FPS, browser, or
+Kindle performance improvement.
+
+All six unchanged goldens and the determinism, progression, and sprite-sort
+checks pass. All 27,229 replay display hashes match the previous renderer,
+including the starter transition. The 16,641 count/limit combinations,
+unaligned buffers, and guard bytes pass under ASan and UBSan. The x86 fallback
+checks pass under Rosetta. `make native-pgo`, `make native-test native-raylib`,
+and `make native-kindle` pass. No original game source or goldens changed.
+The PGO benchmark rebuild has no profile mismatch warnings; the Raylib build
+continues to discard the benchmark's incompatible frontend `main` profile.
+
+Sources, raw measurements, profiles, and logs are in the ignored
+`build/native/perf/oam-next/` directory. Final evidence includes
+`baseline-production-*.json`, `final-production-*.json`,
+`production-summary.json`, `final-artifacts.json`, `final-buildoam.s`,
+`final-trace.txt`, `final-targets.log`, and `final-kindle.log`. The default
+profile at `build/native/pgo/native.profdata` is freshly trained for this code.
