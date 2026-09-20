@@ -3,6 +3,11 @@
 #include "main.h"
 #include "palette.h"
 
+#if WASM
+// This file sets gOamMatricesModified itself where it writes the matrices.
+#undef gOamMatrices
+#endif
+
 #define MAX_SPRITE_COPY_REQUESTS 64
 
 #define sAnchorX data[6]
@@ -303,6 +308,7 @@ EWRAM_DATA struct OamMatrix gOamMatrices[OAM_MATRIX_COUNT] = {0};
 EWRAM_DATA bool8 gAffineAnimsDisabled = FALSE;
 
 #if WASM
+bool8 gOamMatricesModified;
 static u32 sSortKey[MAX_SPRITES];
 static u32 sPrevSortKey[MAX_SPRITES];
 static u8 sSpriteOrderPos[MAX_SPRITES];
@@ -798,8 +804,9 @@ void CopyMatricesToOamBuffer(void)
     if (sOamTailLoaded
      && sOamShadowCount == sOamCount
      && sOamShadowLimit == gOamLimit
-     && OamMatricesMatchShadow())
+     && (!gOamMatricesModified || OamMatricesMatchShadow()))
     {
+        gOamMatricesModified = FALSE;
         WasmCopyOamMatrices(gOamMatrices, gMain.oamBuffer, &gDummyOamData, sOamCount, sOamCount, sOamCount);
         return;
     }
@@ -809,6 +816,7 @@ void CopyMatricesToOamBuffer(void)
     sOamShadowCount = sOamCount;
     sOamShadowLimit = gOamLimit;
     sOamTailLoaded = FALSE;
+    gOamMatricesModified = FALSE;
 #else
     u8 i;
     for (i = 0; i < OAM_MATRIX_COUNT; i++)
@@ -1067,10 +1075,19 @@ void ResetOamMatrices(void)
         gOamMatrices[i].c = 0x0000;
         gOamMatrices[i].d = 0x0100;
     }
+#if WASM
+    gOamMatricesModified = TRUE;
+#endif
 }
 
 void SetOamMatrix(u8 matrixNum, u16 a, u16 b, u16 c, u16 d)
 {
+#if WASM
+    // Callers set the same values again on most frames.
+    if (gOamMatrices[matrixNum].a != (s16)a || gOamMatrices[matrixNum].b != (s16)b
+     || gOamMatrices[matrixNum].c != (s16)c || gOamMatrices[matrixNum].d != (s16)d)
+        gOamMatricesModified = TRUE;
+#endif
     gOamMatrices[matrixNum].a = a;
     gOamMatrices[matrixNum].b = b;
     gOamMatrices[matrixNum].c = c;
@@ -1651,6 +1668,9 @@ void CopyOamMatrix(u8 destMatrixIndex, struct OamMatrix *srcMatrix)
     gOamMatrices[destMatrixIndex].b = srcMatrix->b;
     gOamMatrices[destMatrixIndex].c = srcMatrix->c;
     gOamMatrices[destMatrixIndex].d = srcMatrix->d;
+#if WASM
+    gOamMatricesModified = TRUE;
+#endif
 }
 
 u8 GetSpriteMatrixNum(struct Sprite *sprite)

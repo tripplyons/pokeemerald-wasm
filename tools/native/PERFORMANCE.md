@@ -701,3 +701,84 @@ with identical flags resolved samples to inlined source functions with
 `atos -i`. The sampler, scripts, profiles, binaries, raw results, and traces
 are in the ignored `build/native/perf/round-next/` directory. `final.json`
 holds the final comparison.
+
+## OAM matrix modified flag
+
+The baseline is `eb6eb9bde` with its PGO profile. A fresh sample of that build
+still put 3.3% of all samples in `OamMatricesMatchShadow`. The comparison runs
+every frame, but across the replay 88.4% of frames leave the matrices
+unchanged, and most of those frames never write them at all.
+
+Unlike the palette buffers, `gOamMatrices` has few writers, and all of them
+use the array name: three functions in `sprite.c` and 30 source lines in five
+battle, animation, and roulette files. None keeps a pointer beyond the
+function that takes it. Under `WASM`, `include/sprite.h` now defines
+`gOamMatrices` as a macro that sets `gOamMatricesModified` before yielding
+the array, so every current and future reference outside `sprite.c` counts as
+a write without editing the writers. Reads count too, which only costs a
+comparison. `sprite.c` undefines the macro and sets the flag itself in
+`ResetOamMatrices`, `CopyOamMatrix`, and `SetOamMatrix`. `SetOamMatrix` sets it
+only when a value differs.
+
+`CopyMatricesToOamBuffer` compares against the shadow only while the flag is
+set and clears it afterwards. A clean flag means nothing has used the array
+since the last comparison or full fill, so the matrices still equal the
+shadow. Modified frames behave exactly as before.
+
+Both binaries were built with their own freshly trained `make native-pgo`
+profile. The table reports medians of eight alternating runs of eight passes
+per binary on the same M3 Max and Apple clang 21.
+
+| Scenario | Baseline frames/s | Modified flag frames/s | Change |
+| --- | ---: | ---: | ---: |
+| Overworld | 6,552,995 | 6,537,789 | -0.2% |
+| Menu | 17,222,912 | 18,168,782 | +5.5% |
+| Battle | 7,825,325 | 7,948,208 | +1.6% |
+| Aggregate score | 10,541,506 | 10,884,709 | +3.3% |
+
+The candidate won all eight paired rounds, with a paired mean of +3.36%. A
+counter build showed why the overworld gains nothing: an affine animation
+there sets the flag on 99.7% of frames, and the matrices differ from the
+shadow on a third of them. The menu and battle scenarios set it on 2.2% of
+frames. These results measure the benchmark's three scenarios, not
+performance throughout the game.
+
+Two variants of the `sprite.c` writers were measured against this one. Setting
+the flag unconditionally in `SetOamMatrix` was 0.6% slower, losing seven of
+eight paired rounds. Also comparing before flagging in `CopyOamMatrix` would
+skip the overworld frames that rewrite the same matrix, but it changed the
+score by -0.1% with two wins in six and the overworld by -1.5%, so that
+writer flags unconditionally.
+
+Every measured invocation passed the unchanged six goldens, determinism,
+progression, and sprite-sort checks. All 27,229 render-trace hashes match the
+baseline. `make native-test`, `make native-raylib`, `make native-kindle`, and
+`make wasm` pass. Preprocessing the five external writer files confirms the
+macro expands on all 30 lines. The replay does not reach the roulette or the
+battle animations that write matrices directly, so those paths are covered by
+the macro's construction rather than by a rendered check. The header and
+source changes are inside `#if WASM`, so the GBA build is unaffected. The
+browser replay was not rerun, and Kindle speed was not measured.
+
+Rejected in this round:
+
+- Skipping the `sprite->oam.x/y` store in `UpdateOamCoords` when the packed
+  value is unchanged, to avoid a possible store-forwarding stall on the later
+  8-byte OAM load. It lost 1.0% with two wins in six.
+- Taking the lowest set bit with `mask & -mask` and clearing it with
+  `mask & (mask - 1)` in the `UpdateOamCoords` loop, to keep the bit scan off
+  the loop-carried chain. It lost 1.4% with one win in six.
+
+A diagnostic that returned early from `UpdateOamCoords` after warmup, with
+invalid hashes as expected, ran the menu scenario about 24% faster, battle
+19%, and overworld 7% to 9%. The loop is about 45 instructions per active
+sprite in a menu frame of roughly 1,200, so its cost matches its instruction
+count. Reducing it needs fewer instructions per sprite, not different
+branches or scheduling. Sprite fields are written from callbacks throughout
+the game, so skipping unchanged sprites has the same tracking problem as the
+palette.
+
+`modflag.json` in the ignored `build/native/perf/round-next/` directory holds
+the final comparison. `modflag3.json` and `modflag-vs-3.json` cover the
+unconditional `SetOamMatrix` variant, `modflag2.json` the `CopyOamMatrix`
+comparison, and `skipstore.json` and `lowbit.json` the rejected loop changes.
